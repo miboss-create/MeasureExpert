@@ -1,0 +1,2 @@
+# MeasureExpert
+基于Halcon和Qt开发的一款通用量测工具
