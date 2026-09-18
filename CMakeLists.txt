@@ -71,14 +71,37 @@ endforeach()
 qt_add_executable(MeasureExpert
     WIN32 MACOSX_BUNDLE
     src/main.cpp
+    src/Core/ProjectTypes.cpp
+    src/Core/ProjectTypes.h
+    src/Core/ProjectService.cpp
+    src/Core/ProjectService.h
+    src/Alg/AlgTypes.h
+    src/Alg/AlignmentService.cpp
+    src/Alg/AlignmentService.h
+    src/Alg/MeasureService.cpp
+    src/Alg/MeasureService.h
+    src/Alg/ToleranceService.cpp
+    src/Alg/ToleranceService.h
+    src/Alg/RunEngine.cpp
+    src/Alg/RunEngine.h
     src/UI/MainWindow.cpp
     src/UI/MainWindow.h
+    src/UI/CalibrationDialog.cpp
+    src/UI/CalibrationDialog.h
+    src/UI/TrainAlignmentDialog.cpp
+    src/UI/TrainAlignmentDialog.h
+    src/UI/EditMeasureDialog.cpp
+    src/UI/EditMeasureDialog.h
     src/UI/CustomImageView.cpp
     src/UI/CustomImageView.h
     src/UI/CustomGraphicsView.cpp
     src/UI/CustomGraphicsView.h
     src/UI/CustomImageItem.cpp
     src/UI/CustomImageItem.h
+    src/UI/RoiRectItem.cpp
+    src/UI/RoiRectItem.h
+    src/UI/ResultOverlay.cpp
+    src/UI/ResultOverlay.h
     src/UI/LogSink.cpp
     src/UI/LogSink.h
     src/UI/LogWidget.cpp

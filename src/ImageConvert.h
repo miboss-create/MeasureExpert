@@ -1,4 +1,4 @@
-#ifndef IMAGECONVERT_H
+﻿#ifndef IMAGECONVERT_H
 #define IMAGECONVERT_H
 #include <QtCore/QDebug>
 #include <QtGui/QImage>
@@ -18,7 +18,7 @@ using namespace HalconCpp;
 //@param clone true 表示与 Mat 不共享内存，更改生成的 mat 不会影响原始图像，false 则会与 mat 共享内存
 //@param rb_swap 只针对 CV_8UC3 格式，如果 true 则会调换 R 与 B RGB->BGR，如果共享内存的话原始图像也会发生变化
 //@return 转换后的 QImage 图像
-QImage cvMat2QImage(const cv::Mat& mat, bool clone = true, bool rb_swap = true)
+inline QImage cvMat2QImage(const cv::Mat& mat, bool clone = true, bool rb_swap = true)
 {
     const uchar *pSrc = (const uchar*)mat.data;
     // 8-bits unsigned, NO. OF CHANNELS = 1
@@ -68,7 +68,7 @@ QImage cvMat2QImage(const cv::Mat& mat, bool clone = true, bool rb_swap = true)
 //@param clone true 表示与 QImage 不共享内存，更改生成的 mat 不会影响原始图像，false 则会与 QImage 共享内存
 //@param rg_swap 只针对 RGB888 格式，如果 true 则会调换 R 与 B RGB->BGR，如果共享内存的话原始图像也会发生变化
 //@return 转换后的 cv::Mat 图像
-cv::Mat QImage2cvMat(QImage &image, bool clone = true, bool rb_swap = true)
+inline cv::Mat QImage2cvMat(QImage &image, bool clone = true, bool rb_swap = true)
 {
     cv::Mat mat;
     qDebug() << image.format();
@@ -99,95 +99,95 @@ cv::Mat QImage2cvMat(QImage &image, bool clone = true, bool rb_swap = true)
  * @param from 输入的 QImage
  * @param to 输出的 HImage ，from 和 to 不共享内存数据。 每次都会为 to 重新分配内存。
  * @return true 表示转换成功，false 表示转换失败。
+ *
+ * 注意：GenImage1 / GenImageInterleaved 默认只引用外部指针。
+ * 这里必须 CopyImage，否则 QImage 生命周期结束后 HImage 会变成野指针，
+ * 后续 FindShapeModel 等读到垃圾数据，常表现为 QString MaxSize 断言崩溃。
  */
-bool QImage2HImage(QImage &from, HalconCpp::HImage &to)
+inline bool QImage2HImage(QImage &from, HalconCpp::HImage &to)
 {
-    if(from.isNull()) return false;
+    if (from.isNull()) {
+        return false;
+    }
 
-    int width = from.width(), height = from.height();
-    QImage::Format format = from.format();
+    const int width = from.width();
+    const int height = from.height();
+    if (width <= 0 || height <= 0) {
+        return false;
+    }
 
-    if(format == QImage::Format_RGB32 ||
-        format == QImage::Format_ARGB32 ||
-        format == QImage::Format_ARGB32_Premultiplied)
-    {
-        if(from.bytesPerLine() == 4 * width)
-        {
-            to.GenImageInterleaved(from.bits(), "bgrx", width, height, 0,  "byte", width, height, 0, 0, 8, 0);
-        }
-        else
-        {
-            to.GenImageInterleaved(from.bits(), "bgrx", width, height, 0,  "byte", width, height, 0, 0, 8, 0);
-            uchar *R, *G, *B;
-            HString Type;
-            Hlong Width, Height;
-            to.GetImagePointer3(reinterpret_cast<void **>(&R),
-                                reinterpret_cast<void **>(&G),
-                                reinterpret_cast<void **>(&B), &Type, &Width, &Height);
-            for(int row = 0; row < height; row ++)
-            {
-                QRgb* line = reinterpret_cast<QRgb*>(from.scanLine(row));
-                for(int col = 0; col < width; col ++)
-                {
-                    *R = qRed(line[col]);
-                    *G = qGreen(line[col]);
-                    *B = qBlue(line[col]);
-                    ++R;
-                    ++G;
-                    ++B;
+    const QImage::Format format = from.format();
+
+    try {
+        if (format == QImage::Format_RGB32
+            || format == QImage::Format_ARGB32
+            || format == QImage::Format_ARGB32_Premultiplied) {
+            // 始终拷贝到 HALCON 自有三通道缓冲，避免引用 QImage 的 32bit 布局
+            HalconCpp::HImage rImg, gImg, bImg;
+            rImg.GenImageConst("byte", width, height);
+            gImg.GenImageConst("byte", width, height);
+            bImg.GenImageConst("byte", width, height);
+
+            HalconCpp::HString type;
+            Hlong w = 0, h = 0;
+            unsigned char *R = reinterpret_cast<unsigned char *>(rImg.GetImagePointer1(&type, &w, &h));
+            unsigned char *G = reinterpret_cast<unsigned char *>(gImg.GetImagePointer1(&type, &w, &h));
+            unsigned char *B = reinterpret_cast<unsigned char *>(bImg.GetImagePointer1(&type, &w, &h));
+            for (int row = 0; row < height; ++row) {
+                const QRgb *line = reinterpret_cast<const QRgb *>(from.constScanLine(row));
+                unsigned char *rLine = R + row * width;
+                unsigned char *gLine = G + row * width;
+                unsigned char *bLine = B + row * width;
+                for (int col = 0; col < width; ++col) {
+                    rLine[col] = static_cast<unsigned char>(qRed(line[col]));
+                    gLine[col] = static_cast<unsigned char>(qGreen(line[col]));
+                    bLine[col] = static_cast<unsigned char>(qBlue(line[col]));
                 }
             }
+            to = rImg.Compose3(gImg, bImg);
+            return true;
         }
-        return true;
-    }
-    else if(format == QImage::Format_RGB888)
-    {
-        if(from.bytesPerLine() == 3 * width)
-        {
-            to.GenImageInterleaved(from.bits(), "rgb", width, height, 0,  "byte", width, height, 0, 0, 8, 0);
-        }
-        else
-        {
-            to.GenImageInterleaved(from.bits(), "rgb", width, height, 0,  "byte", width, height, 0, 0, 8, 0);
-            uchar *R, *G, *B;
-            HString Type;
-            Hlong Width, Height;
-            to.GetImagePointer3(reinterpret_cast<void **>(&R),
-                                reinterpret_cast<void **>(&G),
-                                reinterpret_cast<void **>(&B), &Type, &Width, &Height);
-            for(int row = 0; row < height; row ++)
-            {
-                unsigned char* line = reinterpret_cast<unsigned char *>(from.scanLine(row));
-                for(int col = 0; col < width; col ++)
-                {
-                    *R ++ = *line ++;
-                    *G ++ = *line ++;
-                    *B ++ = *line ++;
+
+        if (format == QImage::Format_RGB888) {
+            HalconCpp::HImage rImg, gImg, bImg;
+            rImg.GenImageConst("byte", width, height);
+            gImg.GenImageConst("byte", width, height);
+            bImg.GenImageConst("byte", width, height);
+
+            HalconCpp::HString type;
+            Hlong w = 0, h = 0;
+            unsigned char *R = reinterpret_cast<unsigned char *>(rImg.GetImagePointer1(&type, &w, &h));
+            unsigned char *G = reinterpret_cast<unsigned char *>(gImg.GetImagePointer1(&type, &w, &h));
+            unsigned char *B = reinterpret_cast<unsigned char *>(bImg.GetImagePointer1(&type, &w, &h));
+            for (int row = 0; row < height; ++row) {
+                const unsigned char *line = from.constScanLine(row);
+                unsigned char *rLine = R + row * width;
+                unsigned char *gLine = G + row * width;
+                unsigned char *bLine = B + row * width;
+                for (int col = 0; col < width; ++col) {
+                    rLine[col] = line[col * 3 + 0];
+                    gLine[col] = line[col * 3 + 1];
+                    bLine[col] = line[col * 3 + 2];
                 }
             }
+            to = rImg.Compose3(gImg, bImg);
+            return true;
         }
-        return true;
-    }
-    else if(format == QImage::Format_Grayscale8 || format == QImage::Format_Indexed8)
-    {
-        if(from.bytesPerLine() == width)
-        {
-            to.GenImage1("byte", width, height, from.bits());
-        }
-        else// 这时说明每行数据之间有填充字节。因此需要重新写数据
-        {
+
+        if (format == QImage::Format_Grayscale8 || format == QImage::Format_Indexed8) {
             to.GenImageConst("byte", width, height);
-            Hlong W, H; HString Type;
-            unsigned char * pTo = reinterpret_cast<unsigned char *>( to.GetImagePointer1(&Type, &W, &H) );
-            for(int row = 1; row < H; row ++)
-            {
-                const unsigned char * pSrc = from.constScanLine(row);
-                unsigned char * pDist = pTo + row * W;
-                memcpy( pDist, pSrc, static_cast<size_t>(W));
+            HalconCpp::HString type;
+            Hlong w = 0, h = 0;
+            unsigned char *dst = reinterpret_cast<unsigned char *>(to.GetImagePointer1(&type, &w, &h));
+            for (int row = 0; row < height; ++row) {
+                memcpy(dst + row * width, from.constScanLine(row), static_cast<size_t>(width));
             }
+            return true;
         }
-        return true;
+    } catch (const HalconCpp::HException &) {
+        return false;
     }
+
     return false;
 }
 
@@ -197,7 +197,7 @@ bool QImage2HImage(QImage &from, HalconCpp::HImage &to)
  * @param to QImage ，这里 from 和 to 不共享内存。如果 to 的内存大小合适，那么就不用重新分配内存。所以可以加快速度。
  * @return  true 表示转换成功，false 表示转换失败
  */
-bool HImage2QImage(HalconCpp::HImage &from, QImage &to)
+inline bool HImage2QImage(HalconCpp::HImage &from, QImage &to)
 {
     Hlong width;
     Hlong height;
