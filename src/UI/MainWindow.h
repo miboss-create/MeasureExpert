@@ -9,6 +9,7 @@ class QTextEdit;
 class QTableWidget;
 class QSplitter;
 class CustomImageView;
+class LogWidget;
 
 class MainWindow : public QMainWindow
 {
@@ -29,7 +30,7 @@ private:
 
     QListWidget *m_recipeList = nullptr;
     QListWidget *m_measureList = nullptr;
-    QTextEdit *m_logWidget = nullptr;
+    LogWidget *m_logWidget = nullptr;
 
     QListWidget *m_sourceThumbList = nullptr;
     CustomImageView *m_imageView = nullptr;

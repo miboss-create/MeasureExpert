@@ -79,6 +79,10 @@ qt_add_executable(MeasureExpert
     src/UI/CustomGraphicsView.h
     src/UI/CustomImageItem.cpp
     src/UI/CustomImageItem.h
+    src/UI/LogSink.cpp
+    src/UI/LogSink.h
+    src/UI/LogWidget.cpp
+    src/UI/LogWidget.h
     src/ImageConvert.h
     resources/resources.qrc
 )

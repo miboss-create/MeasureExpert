@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 
 #include "CustomImageView.h"
+#include "LogWidget.h"
 
 #include <QAction>
 #include <QFileDialog>
@@ -29,14 +30,13 @@ MainWindow::MainWindow(QWidget *parent)
     createToolBar();
 
     if (!initWidget()) {
-        m_logWidget = new QTextEdit(this);
-        setCentralWidget(m_logWidget);
-        m_logWidget->setPlainText(tr("界面初始化失败。"));
+        auto *fallback = new QTextEdit(this);
+        setCentralWidget(fallback);
+        fallback->setPlainText(tr("界面初始化失败。"));
         return;
     }
 
     createStatusBar();
-    m_logWidget->append(tr("[INFO] MeasureExpert 已启动（主图：Qt ImageView）。"));
 }
 
 MainWindow::~MainWindow() = default;
@@ -57,9 +57,7 @@ bool MainWindow::initWidget()
     m_measureList->addItem(tr("(暂无测量项)"));
     configLayout->addWidget(m_measureList, 2);
 
-    m_logWidget = new QTextEdit(this);
-    m_logWidget->setReadOnly(true);
-    m_logWidget->setPlaceholderText(tr("运行日志"));
+    m_logWidget = new LogWidget(this);
 
     auto *leftSplitter = new QSplitter(Qt::Vertical, this);
     leftSplitter->addWidget(configPanel);
@@ -189,6 +187,7 @@ void MainWindow::onLoadImage()
         return;
     }
     m_imageView->setImagePath(path);
-    m_logWidget->append(tr("[INFO] 已加载图像: %1").arg(path));
-    statusBar()->showMessage(tr("图像源: %1 | 标定: 未标定(px) | 节拍: - | 模式: 编辑 | 通信: 预留").arg(path));
+    qInfo().noquote() << tr("已加载图像: %1").arg(path);
+    statusBar()->showMessage(
+        tr("图像源: %1 | 标定: 未标定(px) | 节拍: - | 模式: 编辑 | 通信: 预留").arg(path));
 }
