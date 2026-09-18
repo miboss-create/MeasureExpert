@@ -83,6 +83,8 @@ qt_add_executable(MeasureExpert
     src/UI/LogSink.h
     src/UI/LogWidget.cpp
     src/UI/LogWidget.h
+    src/UI/ThumbnailStrip.cpp
+    src/UI/ThumbnailStrip.h
     src/ImageConvert.h
     resources/resources.qrc
 )

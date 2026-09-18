@@ -2,13 +2,14 @@
 
 #include "CustomImageView.h"
 #include "LogWidget.h"
+#include "ThumbnailStrip.h"
 
 #include <QAction>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QLabel>
-#include <QListView>
 #include <QListWidget>
 #include <QMenuBar>
 #include <QSplitter>
@@ -27,7 +28,6 @@ MainWindow::MainWindow(QWidget *parent)
     setWindowIcon(QIcon(QStringLiteral(":/icons/app_icon.png")));
 
     createMenus();
-    createToolBar();
 
     if (!initWidget()) {
         auto *fallback = new QTextEdit(this);
@@ -36,6 +36,7 @@ MainWindow::MainWindow(QWidget *parent)
         return;
     }
 
+    createToolBar();
     createStatusBar();
 }
 
@@ -65,32 +66,38 @@ bool MainWindow::initWidget()
     leftSplitter->setStretchFactor(0, 3);
     leftSplitter->setStretchFactor(1, 2);
 
-    m_sourceThumbList = new QListWidget(this);
-    m_sourceThumbList->setFixedWidth(120);
-    m_sourceThumbList->setViewMode(QListView::ListMode);
-    m_sourceThumbList->addItem(tr("源图缩略图"));
+    m_sourceThumbs = new ThumbnailStrip(ThumbnailStrip::Orientation::Vertical, this);
+    connect(m_sourceThumbs, &ThumbnailStrip::currentImageChanged,
+            this, &MainWindow::onThumbImageChanged);
+    connect(m_sourceThumbs, &ThumbnailStrip::currentPathChanged,
+            this, &MainWindow::onThumbPathChanged);
+    connect(m_sourceThumbs, &ThumbnailStrip::currentIndexChanged,
+            this, &MainWindow::onSourceIndexChanged);
 
     m_imageView = new CustomImageView(this);
     m_imageView->setMinimumSize(400, 300);
 
-    m_resultThumbList = new QListWidget(this);
-    m_resultThumbList->setFixedHeight(100);
-    m_resultThumbList->setFlow(QListView::LeftToRight);
-    m_resultThumbList->setViewMode(QListView::ListMode);
-    m_resultThumbList->addItem(tr("结果缩略图(可选)"));
+    // 结果横条暂用原图缩略图代替，与源图条同步
+    m_resultThumbs = new ThumbnailStrip(ThumbnailStrip::Orientation::Horizontal, this);
+    connect(m_resultThumbs, &ThumbnailStrip::currentImageChanged,
+            this, &MainWindow::onThumbImageChanged);
+    connect(m_resultThumbs, &ThumbnailStrip::currentPathChanged,
+            this, &MainWindow::onThumbPathChanged);
+    connect(m_resultThumbs, &ThumbnailStrip::currentIndexChanged,
+            this, &MainWindow::onResultIndexChanged);
 
     auto *imageColumn = new QWidget(this);
     auto *imageColLayout = new QVBoxLayout(imageColumn);
     imageColLayout->setContentsMargins(0, 0, 0, 0);
     imageColLayout->setSpacing(4);
     imageColLayout->addWidget(m_imageView, 1);
-    imageColLayout->addWidget(m_resultThumbList);
+    imageColLayout->addWidget(m_resultThumbs);
 
     auto *centerWidget = new QWidget(this);
     auto *centerLayout = new QHBoxLayout(centerWidget);
     centerLayout->setContentsMargins(0, 0, 0, 0);
     centerLayout->setSpacing(4);
-    centerLayout->addWidget(m_sourceThumbList);
+    centerLayout->addWidget(m_sourceThumbs);
     centerLayout->addWidget(imageColumn, 1);
 
     m_okNgLabel = new QLabel(tr("---"), this);
@@ -141,10 +148,13 @@ void MainWindow::createMenus()
     fileMenu->addAction(tr("保存工程"), this, [] {});
     fileMenu->addSeparator();
     fileMenu->addAction(tr("加载图像..."), this, &MainWindow::onLoadImage);
+    fileMenu->addAction(tr("加载图像文件夹..."), this, &MainWindow::onLoadFolder);
     fileMenu->addSeparator();
     fileMenu->addAction(tr("退出"), this, &QWidget::close);
 
-    menuBar()->addMenu(tr("采集(&A)"));
+    auto *acqMenu = menuBar()->addMenu(tr("采集(&A)"));
+    acqMenu->addAction(tr("加载图像文件夹..."), this, &MainWindow::onLoadFolder);
+
     menuBar()->addMenu(tr("标定(&C)"));
     menuBar()->addMenu(tr("运行(&R)"));
     menuBar()->addMenu(tr("工具(&T)"));
@@ -160,8 +170,9 @@ void MainWindow::createToolBar()
     tb->addAction(tr("保存"));
     tb->addSeparator();
     tb->addAction(tr("加载图"), this, &MainWindow::onLoadImage);
-    tb->addAction(tr("上一张"));
-    tb->addAction(tr("下一张"));
+    tb->addAction(tr("加载文件夹"), this, &MainWindow::onLoadFolder);
+    tb->addAction(tr("上一张"), m_sourceThumbs, &ThumbnailStrip::selectPrevious);
+    tb->addAction(tr("下一张"), m_sourceThumbs, &ThumbnailStrip::selectNext);
     tb->addSeparator();
     tb->addAction(tr("单次试跑"));
     tb->addAction(tr("连续运行"));
@@ -172,8 +183,24 @@ void MainWindow::createToolBar()
 
 void MainWindow::createStatusBar()
 {
+    updateImageSourceStatus(tr("未设置"));
+}
+
+void MainWindow::updateImageSourceStatus(const QString &source)
+{
     statusBar()->showMessage(
-        tr("图像源: 未设置 | 标定: 未标定(px) | 节拍: - | 模式: 编辑 | 通信: 预留"));
+        tr("图像源: %1 | 标定: 未标定(px) | 节拍: - | 模式: 编辑 | 通信: 预留").arg(source));
+}
+
+void MainWindow::syncThumbSelection(ThumbnailStrip *from, ThumbnailStrip *to, int index)
+{
+    Q_UNUSED(from);
+    if (!to || m_syncingThumbs) {
+        return;
+    }
+    m_syncingThumbs = true;
+    to->setCurrentIndex(index);
+    m_syncingThumbs = false;
 }
 
 void MainWindow::onLoadImage()
@@ -188,6 +215,44 @@ void MainWindow::onLoadImage()
     }
     m_imageView->setImagePath(path);
     qInfo().noquote() << tr("已加载图像: %1").arg(path);
-    statusBar()->showMessage(
-        tr("图像源: %1 | 标定: 未标定(px) | 节拍: - | 模式: 编辑 | 通信: 预留").arg(path));
+    updateImageSourceStatus(path);
+}
+
+void MainWindow::onLoadFolder()
+{
+    if (!m_sourceThumbs->openFolderDialog()) {
+        if (!m_sourceThumbs->folderPath().isEmpty() && m_sourceThumbs->count() == 0) {
+            qWarning().noquote() << tr("文件夹内未找到可识别图像");
+        }
+        return;
+    }
+
+    // 结果横条暂复用同一批原图
+    m_resultThumbs->loadFolder(m_sourceThumbs->folderPath());
+    syncThumbSelection(m_sourceThumbs, m_resultThumbs, m_sourceThumbs->currentIndex());
+
+    qInfo().noquote() << tr("已加载文件夹: %1（%2 张）")
+                             .arg(m_sourceThumbs->folderPath())
+                             .arg(m_sourceThumbs->count());
+}
+
+void MainWindow::onThumbImageChanged(const QImage &image)
+{
+    m_imageView->setImage(image);
+}
+
+void MainWindow::onThumbPathChanged(const QString &path)
+{
+    updateImageSourceStatus(path);
+    qInfo().noquote() << tr("当前图像: %1").arg(QFileInfo(path).fileName());
+}
+
+void MainWindow::onSourceIndexChanged(int index)
+{
+    syncThumbSelection(m_sourceThumbs, m_resultThumbs, index);
+}
+
+void MainWindow::onResultIndexChanged(int index)
+{
+    syncThumbSelection(m_resultThumbs, m_sourceThumbs, index);
 }
