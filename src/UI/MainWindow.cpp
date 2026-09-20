@@ -307,8 +307,6 @@ bool MainWindow::initWidget()
             this, &MainWindow::onThumbImageChanged);
     connect(m_sourceThumbs, &ThumbnailStrip::currentPathChanged,
             this, &MainWindow::onThumbPathChanged);
-    connect(m_sourceThumbs, &ThumbnailStrip::currentIndexChanged,
-            this, &MainWindow::onSourceIndexChanged);
 
     m_imageView = new CustomImageView(this);
     m_imageView->setMinimumSize(400, 300);
@@ -325,27 +323,12 @@ bool MainWindow::initWidget()
         qInfo().noquote() << tr("ROI 已删除");
     });
 
-    m_resultThumbs = new ThumbnailStrip(ThumbnailStrip::Orientation::Horizontal, this);
-    connect(m_resultThumbs, &ThumbnailStrip::currentImageChanged,
-            this, &MainWindow::onThumbImageChanged);
-    connect(m_resultThumbs, &ThumbnailStrip::currentPathChanged,
-            this, &MainWindow::onThumbPathChanged);
-    connect(m_resultThumbs, &ThumbnailStrip::currentIndexChanged,
-            this, &MainWindow::onResultIndexChanged);
-
-    auto *imageColumn = new QWidget(this);
-    auto *imageColLayout = new QVBoxLayout(imageColumn);
-    imageColLayout->setContentsMargins(0, 0, 0, 0);
-    imageColLayout->setSpacing(4);
-    imageColLayout->addWidget(m_imageView, 1);
-    imageColLayout->addWidget(m_resultThumbs);
-
     auto *centerWidget = new QWidget(this);
     auto *centerLayout = new QHBoxLayout(centerWidget);
     centerLayout->setContentsMargins(0, 0, 0, 0);
     centerLayout->setSpacing(4);
     centerLayout->addWidget(m_sourceThumbs);
-    centerLayout->addWidget(imageColumn, 1);
+    centerLayout->addWidget(m_imageView, 1);
 
     m_okNgLabel = new QLabel(tr("---"), this);
     m_okNgLabel->setAlignment(Qt::AlignCenter);
@@ -486,17 +469,6 @@ void MainWindow::updateCalibrationStatus()
     statusBar()->showMessage(
         tr("图像源: %1 | 标定: %2 | 节拍: - | 模式: 编辑 | 通信: 预留")
             .arg(m_currentImageStatus, calText));
-}
-
-void MainWindow::syncThumbSelection(ThumbnailStrip *from, ThumbnailStrip *to, int index)
-{
-    Q_UNUSED(from);
-    if (!to || m_syncingThumbs) {
-        return;
-    }
-    m_syncingThumbs = true;
-    to->setCurrentIndex(index);
-    m_syncingThumbs = false;
 }
 
 QString MainWindow::selectedRecipeId() const
@@ -706,8 +678,6 @@ void MainWindow::maybeLoadImageFolderFromProject()
         return;
     }
     if (m_sourceThumbs->loadFolder(src.path)) {
-        m_resultThumbs->loadFolder(src.path);
-        syncThumbSelection(m_sourceThumbs, m_resultThumbs, m_sourceThumbs->currentIndex());
         qInfo().noquote() << tr("已按工程加载文件夹: %1（%2 张）")
                                  .arg(src.path)
                                  .arg(m_sourceThumbs->count());
@@ -842,8 +812,6 @@ void MainWindow::onLoadFolder()
         return;
     }
 
-    m_resultThumbs->loadFolder(m_sourceThumbs->folderPath());
-    syncThumbSelection(m_sourceThumbs, m_resultThumbs, m_sourceThumbs->currentIndex());
     m_projectService->setImageSourceFolder(m_sourceThumbs->folderPath());
     updateWindowTitle();
 
@@ -1154,16 +1122,6 @@ void MainWindow::onThumbPathChanged(const QString &path)
 {
     updateImageSourceStatus(path);
     qInfo().noquote() << tr("当前图像: %1").arg(QFileInfo(path).fileName());
-}
-
-void MainWindow::onSourceIndexChanged(int index)
-{
-    syncThumbSelection(m_sourceThumbs, m_resultThumbs, index);
-}
-
-void MainWindow::onResultIndexChanged(int index)
-{
-    syncThumbSelection(m_resultThumbs, m_sourceThumbs, index);
 }
 
 void MainWindow::onRecipeSelectionChanged()

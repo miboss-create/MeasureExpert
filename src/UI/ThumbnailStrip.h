@@ -7,7 +7,7 @@
 class QListWidget;
 class QImage;
 
-// 缩略图条：竖条源图 / 横条结果（暂可复用原图）
+// 缩略图条：竖条源图浏览/点选
 class ThumbnailStrip : public QWidget
 {
     Q_OBJECT
