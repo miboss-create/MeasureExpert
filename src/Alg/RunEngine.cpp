@@ -1,8 +1,8 @@
 #include "Alg/RunEngine.h"
 
-#include "Alg/AlignmentService.h"
 #include "Alg/MeasureService.h"
 #include "Alg/ToleranceService.h"
+#include "Alg/ToolRegistry.h"
 
 #include <QElapsedTimer>
 
@@ -40,12 +40,15 @@ void RunEngine::runOnce(const QImage &image,
         return;
     }
 
-    cycle.alignment = AlignmentService::find(image, recipe.alignment, projectDir);
+    ToolContext ctx;
+    ctx.image = image;
+    ctx.calibration = calibration;
+    ctx.projectDir = projectDir;
+    cycle.alignment = ToolRegistry::runAlignment(ctx, recipe.alignment);
     cycle.alignmentOk = cycle.alignment.ok;
     if (!cycle.alignment.ok) {
         cycle.reason = cycle.alignment.message;
         cycle.totalOk = false;
-        // 仍填充测量项为失败行，便于结果表展示
         for (const MeasureItem &item : recipe.measures) {
             MeasureResult r;
             r.id = item.id;

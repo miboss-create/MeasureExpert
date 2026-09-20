@@ -2,12 +2,14 @@
 
 #include "Alg/AlignmentService.h"
 #include "Alg/RunEngine.h"
+#include "Core/CsvResultStore.h"
 #include "Core/ProjectService.h"
 #include "CustomImageView.h"
 #include "LogWidget.h"
 #include "ThumbnailStrip.h"
 #include "UI/CalibrationDialog.h"
 #include "UI/EditMeasureDialog.h"
+#include "UI/ManageRecipesDialog.h"
 #include "UI/ResultOverlay.h"
 #include "UI/TrainAlignmentDialog.h"
 
@@ -15,10 +17,14 @@
 #include <QAbstractItemView>
 #include <QCloseEvent>
 #include <QColor>
+#include <QComboBox>
 #include <QCoreApplication>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QIcon>
@@ -36,7 +42,9 @@
 #include <QTableWidget>
 #include <QTextEdit>
 #include <QThread>
+#include <QTimer>
 #include <QToolBar>
+#include <QVBoxLayout>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QtMath>
@@ -61,8 +69,6 @@ MainWindow::MainWindow(QWidget *parent)
     setMinimumSize(1200, 720);
     setWindowIcon(QIcon(QStringLiteral(":/icons/app_icon.png")));
 
-    createMenus();
-
     if (!initWidget()) {
         auto *fallback = new QTextEdit(this);
         setCentralWidget(fallback);
@@ -70,14 +76,18 @@ MainWindow::MainWindow(QWidget *parent)
         return;
     }
 
+    createMenus();
     createToolBar();
     createStatusBar();
     setupRunEngine();
+    applyAppModeUi();
+    refreshRecipeList();
+    refreshMeasureList();
 
     connect(m_projectService, &ProjectService::structureChanged,
-            this, &MainWindow::onProjectStructureChanged);
+            this, &MainWindow::onProjectStructureChanged, Qt::QueuedConnection);
     connect(m_projectService, &ProjectService::dirtyChanged,
-            this, &MainWindow::onDirtyChanged);
+            this, &MainWindow::onDirtyChanged, Qt::QueuedConnection);
     connect(m_projectService, &ProjectService::projectLoaded,
             this, [this](const QString &path) {
                 qInfo().noquote() << tr("已打开工程: %1").arg(path);
@@ -102,8 +112,8 @@ MainWindow::~MainWindow()
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-    if (m_running) {
-        QMessageBox::information(this, tr("提示"), tr("正在试跑，请稍候再关闭。"));
+    if (m_busy || m_continuous) {
+        QMessageBox::information(this, tr("提示"), tr("正在运行，请先停止再关闭。"));
         event->ignore();
         return;
     }
@@ -147,16 +157,36 @@ void MainWindow::updateRoiActionTexts()
 void MainWindow::enterRoiEditMode(bool forMeasure)
 {
     m_roiEditMode = forMeasure ? RoiEditMode::MeasureCaliper : RoiEditMode::AlignTemplate;
+
+    bool circleRoi = false;
     if (forMeasure) {
-        m_imageView->setRoiStyle(QColor(255, 200, 0), tr("卡尺"));
+        const QString measureId = selectedMeasureId();
+        const auto *recipe = m_projectService->activeRecipe();
+        if (recipe && !measureId.isEmpty()) {
+            const int idx = recipe->indexOfMeasure(measureId);
+            if (idx >= 0) {
+                circleRoi = (recipe->measures.at(idx).type == MeasureType::FindCircle);
+            }
+        }
+        m_imageView->setRoiShape(circleRoi ? RoiRectItem::Shape::Circle
+                                           : RoiRectItem::Shape::Rectangle);
+        m_imageView->setRoiStyle(QColor(255, 200, 0),
+                                 circleRoi ? tr("找圆") : tr("卡尺"));
     } else {
+        m_imageView->setRoiShape(RoiRectItem::Shape::Rectangle);
         m_imageView->setRoiStyle(QColor(0, 220, 120), tr("模板"));
     }
 
     if (!m_imageView->hasRoi()) {
         const int w = m_currentImage.width();
         const int h = m_currentImage.height();
-        m_imageView->setRoiImageRect(QRectF(w * 0.25, h * 0.25, w * 0.5, h * 0.5));
+        if (circleRoi) {
+            const double side = qMin(w, h) * 0.35;
+            m_imageView->setRoiImageRect(
+                QRectF((w - side) * 0.5, (h - side) * 0.5, side, side));
+        } else {
+            m_imageView->setRoiImageRect(QRectF(w * 0.25, h * 0.25, w * 0.5, h * 0.5));
+        }
     }
     m_imageView->setRoiEditEnabled(true);
     if (m_cancelRoiAction) {
@@ -164,10 +194,17 @@ void MainWindow::enterRoiEditMode(bool forMeasure)
     }
     updateRoiActionTexts();
     if (forMeasure) {
-        statusBar()->showMessage(
-            tr("卡尺 ROI：左键拖拽绘制，右键确认后可拖图并调整黄框；选中右键可删除。调好后点「确认卡尺ROI」。Esc 取消。"),
-            0);
-        qInfo().noquote() << tr("已进入卡尺 ROI 编辑：请在主图上调整黄色矩形");
+        if (circleRoi) {
+            statusBar()->showMessage(
+                tr("找圆 ROI：左键拖出圆形，右键确认后可拖图并调整；调好后点「确认卡尺ROI」。Esc 取消。"),
+                0);
+            qInfo().noquote() << tr("已进入找圆 ROI 编辑：请在主图上调整黄色圆");
+        } else {
+            statusBar()->showMessage(
+                tr("卡尺 ROI：左键拖拽绘制，右键确认后可拖图并调整黄框；选中右键可删除。调好后点「确认卡尺ROI」。Esc 取消。"),
+                0);
+            qInfo().noquote() << tr("已进入卡尺 ROI 编辑：请在主图上调整黄色矩形");
+        }
     } else {
         statusBar()->showMessage(
             tr("模板 ROI：左键拖拽绘制，右键确认后可拖图并调整绿框；选中右键可删除。调好后点「确认训练模板」。Esc 取消。"),
@@ -186,6 +223,7 @@ void MainWindow::leaveRoiEditMode(bool clearRoi)
     if (clearRoi) {
         m_imageView->clearRoi();
     }
+    m_imageView->setRoiShape(RoiRectItem::Shape::Rectangle);
     m_imageView->setRoiStyle(QColor(0, 220, 120), tr("模板"));
     if (m_cancelRoiAction) {
         m_cancelRoiAction->setEnabled(false);
@@ -201,12 +239,21 @@ void MainWindow::onCancelRoiEdit()
 }
 
 QRectF MainWindow::measureGeometryToImageRect(const Me::CaliperGeometry &geo,
-                                             const Me::AlignmentResult &align) const
+                                             const Me::AlignmentResult &align,
+                                             Me::MeasureType type) const
 {
     const double cA = qCos(align.angleRad);
     const double sA = qSin(align.angleRad);
     const double rowImg = cA * geo.row - sA * geo.column + align.row;
     const double colImg = sA * geo.row + cA * geo.column + align.column;
+
+    if (type == MeasureType::FindCircle) {
+        // 正圆外接方框：半径 = length1，环宽 = length2 → 外径 length1+length2
+        const double outer = qMax(4.0, geo.length1 + qMax(0.0, geo.length2));
+        const double side = qMax(8.0, outer * 2.0);
+        return QRectF(colImg - side * 0.5, rowImg - side * 0.5, side, side);
+    }
+
     const double w = qMax(8.0, geo.length1 * 2.0);
     const double h = qMax(8.0, geo.length2 * 2.0);
     return QRectF(colImg - w * 0.5, rowImg - h * 0.5, w, h);
@@ -255,20 +302,13 @@ bool MainWindow::initWidget()
     auto *configLayout = new QVBoxLayout(configPanel);
     configLayout->setContentsMargins(4, 4, 4, 4);
 
-    configLayout->addWidget(new QLabel(tr("配方"), configPanel));
-    m_recipeList = new QListWidget(configPanel);
-    configLayout->addWidget(m_recipeList, 1);
-
-    auto *recipeBtnRow = new QHBoxLayout();
-    m_addRecipeBtn = new QPushButton(tr("添加"), configPanel);
-    m_removeRecipeBtn = new QPushButton(tr("删除"), configPanel);
-    recipeBtnRow->addWidget(m_addRecipeBtn);
-    recipeBtnRow->addWidget(m_removeRecipeBtn);
-    configLayout->addLayout(recipeBtnRow);
+    m_activeRecipeLabel = new QLabel(configPanel);
+    m_activeRecipeLabel->setWordWrap(true);
+    configLayout->addWidget(m_activeRecipeLabel);
 
     configLayout->addWidget(new QLabel(tr("测量项"), configPanel));
     m_measureList = new QListWidget(configPanel);
-    configLayout->addWidget(m_measureList, 2);
+    configLayout->addWidget(m_measureList, 1);
 
     auto *measureBtnRow = new QHBoxLayout();
     m_addMeasureBtn = new QPushButton(tr("添加"), configPanel);
@@ -281,14 +321,10 @@ bool MainWindow::initWidget()
     measureBtnRow->addWidget(m_removeMeasureBtn);
     configLayout->addLayout(measureBtnRow);
 
-    connect(m_recipeList, &QListWidget::currentRowChanged,
-            this, &MainWindow::onRecipeSelectionChanged);
     connect(m_measureList, &QListWidget::currentRowChanged,
             this, &MainWindow::onMeasureSelectionChanged);
     connect(m_measureList, &QListWidget::itemDoubleClicked,
             this, &MainWindow::onMeasureDoubleClicked);
-    connect(m_addRecipeBtn, &QPushButton::clicked, this, &MainWindow::onAddRecipe);
-    connect(m_removeRecipeBtn, &QPushButton::clicked, this, &MainWindow::onRemoveRecipe);
     connect(m_addMeasureBtn, &QPushButton::clicked, this, &MainWindow::onAddMeasure);
     connect(m_editMeasureBtn, &QPushButton::clicked, this, &MainWindow::onEditMeasure);
     connect(m_drawMeasureRoiBtn, &QPushButton::clicked, this, &MainWindow::onDrawMeasureRoi);
@@ -367,7 +403,7 @@ bool MainWindow::initWidget()
     m_mainSplitter->setStretchFactor(0, 2);
     m_mainSplitter->setStretchFactor(1, 5);
     m_mainSplitter->setStretchFactor(2, 2);
-    m_mainSplitter->setSizes({280, 700, 280});
+    m_mainSplitter->setSizes({220, 760, 280});
 
     setCentralWidget(m_mainSplitter);
     return true;
@@ -387,7 +423,14 @@ void MainWindow::createMenus()
     fileMenu->addAction(tr("退出"), this, &QWidget::close);
 
     auto *acqMenu = menuBar()->addMenu(tr("采集(&A)"));
+    acqMenu->addAction(tr("加载图像..."), this, &MainWindow::onLoadImage);
     acqMenu->addAction(tr("加载图像文件夹..."), this, &MainWindow::onLoadFolder);
+    acqMenu->addSeparator();
+    acqMenu->addAction(tr("上一张"), m_sourceThumbs, &ThumbnailStrip::selectPrevious);
+    acqMenu->addAction(tr("下一张"), m_sourceThumbs, &ThumbnailStrip::selectNext);
+
+    auto *recipeMenu = menuBar()->addMenu(tr("配方(&P)"));
+    m_manageRecipesAction = recipeMenu->addAction(tr("管理配方..."), this, &MainWindow::onManageRecipes);
 
     auto *calMenu = menuBar()->addMenu(tr("标定(&C)"));
     calMenu->addAction(tr("像素当量..."), this, &MainWindow::onCalibration);
@@ -399,7 +442,12 @@ void MainWindow::createMenus()
     m_cancelRoiAction->setEnabled(false);
     runMenu->addAction(tr("编辑测量项..."), this, &MainWindow::onEditMeasure);
     runMenu->addSeparator();
-    runMenu->addAction(tr("单次试跑"), this, &MainWindow::onRunOnce);
+    m_runOnceAction = runMenu->addAction(tr("单次试跑"), this, &MainWindow::onRunOnce);
+    m_continuousAction = runMenu->addAction(tr("连续运行"), this, &MainWindow::onContinuousRun);
+    m_stopAction = runMenu->addAction(tr("停止"), this, &MainWindow::onStopRun);
+    m_stopAction->setEnabled(false);
+    runMenu->addSeparator();
+    m_modeToggleAction = runMenu->addAction(tr("切换到运行模式"), this, &MainWindow::onToggleEditRunMode);
 
     menuBar()->addMenu(tr("工具(&T)"));
     menuBar()->addMenu(tr("帮助(&H)"));
@@ -409,15 +457,6 @@ void MainWindow::createToolBar()
 {
     auto *tb = addToolBar(tr("主工具栏"));
     tb->setMovable(false);
-    tb->addAction(tr("新建"), this, &MainWindow::onNewProject);
-    tb->addAction(tr("打开"), this, &MainWindow::onOpenProject);
-    tb->addAction(tr("保存"), this, &MainWindow::onSaveProject);
-    tb->addSeparator();
-    tb->addAction(tr("加载图"), this, &MainWindow::onLoadImage);
-    tb->addAction(tr("加载文件夹"), this, &MainWindow::onLoadFolder);
-    tb->addAction(tr("上一张"), m_sourceThumbs, &ThumbnailStrip::selectPrevious);
-    tb->addAction(tr("下一张"), m_sourceThumbs, &ThumbnailStrip::selectNext);
-    tb->addSeparator();
     tb->addAction(tr("标定"), this, &MainWindow::onCalibration);
     if (!m_trainAlignAction) {
         m_trainAlignAction = new QAction(tr("定位模板"), this);
@@ -429,11 +468,29 @@ void MainWindow::createToolBar()
         connect(m_drawMeasureRoiAction, &QAction::triggered, this, &MainWindow::onDrawMeasureRoi);
     }
     tb->addAction(m_drawMeasureRoiAction);
-    tb->addAction(tr("单次试跑"), this, &MainWindow::onRunOnce);
-    tb->addAction(tr("连续运行"));
-    tb->addAction(tr("停止"));
     tb->addSeparator();
-    tb->addAction(tr("编辑⇄运行"));
+    if (!m_runOnceAction) {
+        m_runOnceAction = new QAction(tr("单次试跑"), this);
+        connect(m_runOnceAction, &QAction::triggered, this, &MainWindow::onRunOnce);
+    }
+    tb->addAction(m_runOnceAction);
+    if (!m_continuousAction) {
+        m_continuousAction = new QAction(tr("连续运行"), this);
+        connect(m_continuousAction, &QAction::triggered, this, &MainWindow::onContinuousRun);
+    }
+    tb->addAction(m_continuousAction);
+    if (!m_stopAction) {
+        m_stopAction = new QAction(tr("停止"), this);
+        connect(m_stopAction, &QAction::triggered, this, &MainWindow::onStopRun);
+        m_stopAction->setEnabled(false);
+    }
+    tb->addAction(m_stopAction);
+    tb->addSeparator();
+    if (!m_modeToggleAction) {
+        m_modeToggleAction = new QAction(tr("切换到运行模式"), this);
+        connect(m_modeToggleAction, &QAction::triggered, this, &MainWindow::onToggleEditRunMode);
+    }
+    tb->addAction(m_modeToggleAction);
 }
 
 void MainWindow::createStatusBar()
@@ -466,15 +523,17 @@ void MainWindow::updateCalibrationStatus()
     const QString calText = cal.calibrated
         ? tr("已标定 %1 mm/px (%2)").arg(cal.pixelSizeMm, 0, 'g', 6).arg(cal.unit)
         : tr("未标定(px)");
+    const QString modeText =
+        (m_appMode == AppMode::Edit) ? tr("编辑") : tr("运行");
+    const QString runText = m_continuous ? tr("连续") : (m_busy ? tr("试跑中") : tr("-"));
     statusBar()->showMessage(
-        tr("图像源: %1 | 标定: %2 | 节拍: - | 模式: 编辑 | 通信: 预留")
-            .arg(m_currentImageStatus, calText));
+        tr("图像源: %1 | 标定: %2 | 节拍: %3 | 模式: %4 | 通信: 预留")
+            .arg(m_currentImageStatus, calText, runText, modeText));
 }
 
 QString MainWindow::selectedRecipeId() const
 {
-    auto *item = m_recipeList->currentItem();
-    return item ? item->data(Qt::UserRole).toString() : QString();
+    return m_projectService->project().activeRecipeId;
 }
 
 QString MainWindow::selectedMeasureId() const
@@ -491,50 +550,58 @@ QString MainWindow::projectDir() const
     return QCoreApplication::applicationDirPath();
 }
 
-void MainWindow::setRunningUi(bool running)
+void MainWindow::setBusyUi(bool busy)
 {
-    m_running = running;
-    m_addRecipeBtn->setEnabled(!running);
-    m_removeRecipeBtn->setEnabled(!running && m_projectService->project().recipes.size() > 1);
-    m_addMeasureBtn->setEnabled(!running);
-    m_editMeasureBtn->setEnabled(!running && m_measureList->count() > 0);
-    m_drawMeasureRoiBtn->setEnabled(!running && m_measureList->count() > 0);
-    m_removeMeasureBtn->setEnabled(!running && m_measureList->count() > 0);
+    m_busy = busy;
+    applyAppModeUi();
+    updateCalibrationStatus();
+}
+
+void MainWindow::applyAppModeUi()
+{
+    const bool edit = (m_appMode == AppMode::Edit);
+    const bool canEdit = edit && !m_busy && !m_continuous;
+
+    m_addMeasureBtn->setEnabled(canEdit);
+    m_editMeasureBtn->setEnabled(canEdit && m_measureList->count() > 0);
+    m_drawMeasureRoiBtn->setEnabled(canEdit && m_measureList->count() > 0);
+    m_removeMeasureBtn->setEnabled(canEdit && m_measureList->count() > 0);
+    if (m_manageRecipesAction) {
+        m_manageRecipesAction->setEnabled(canEdit);
+    }
+
+    if (m_trainAlignAction) {
+        m_trainAlignAction->setEnabled(canEdit);
+    }
+    if (m_drawMeasureRoiAction) {
+        m_drawMeasureRoiAction->setEnabled(canEdit);
+    }
+    if (m_runOnceAction) {
+        m_runOnceAction->setEnabled(!m_busy && !m_continuous);
+    }
+    if (m_continuousAction) {
+        m_continuousAction->setEnabled(!m_busy && !m_continuous);
+    }
+    if (m_stopAction) {
+        m_stopAction->setEnabled(m_busy || m_continuous);
+    }
+    if (m_modeToggleAction) {
+        m_modeToggleAction->setEnabled(!m_busy && !m_continuous);
+        m_modeToggleAction->setText(edit ? tr("切换到运行模式") : tr("切换到编辑模式"));
+    }
 }
 
 void MainWindow::refreshRecipeList()
 {
-    m_updatingLists = true;
-    const QString keepId = selectedRecipeId().isEmpty()
-        ? m_projectService->project().activeRecipeId
-        : selectedRecipeId();
-
-    m_recipeList->clear();
-    for (const auto &recipe : m_projectService->project().recipes) {
-        auto *item = new QListWidgetItem(recipe.name, m_recipeList);
-        item->setData(Qt::UserRole, recipe.id);
-        if (!recipe.enabled) {
-            item->setForeground(Qt::gray);
-        }
-        if (!recipe.alignment.modelFile.isEmpty()) {
-            item->setToolTip(tr("模型: %1").arg(recipe.alignment.modelFile));
+    const auto *recipe = m_projectService->activeRecipe();
+    if (m_activeRecipeLabel) {
+        if (recipe) {
+            m_activeRecipeLabel->setText(tr("当前配方: %1").arg(recipe->name));
+        } else {
+            m_activeRecipeLabel->setText(tr("当前配方: (无)"));
         }
     }
-
-    int row = 0;
-    for (int i = 0; i < m_recipeList->count(); ++i) {
-        if (m_recipeList->item(i)->data(Qt::UserRole).toString() == keepId) {
-            row = i;
-            break;
-        }
-    }
-    if (m_recipeList->count() > 0) {
-        m_recipeList->setCurrentRow(row);
-        m_projectService->setActiveRecipeId(
-            m_recipeList->item(row)->data(Qt::UserRole).toString(), false);
-    }
-    m_updatingLists = false;
-    m_removeRecipeBtn->setEnabled(!m_running && m_projectService->project().recipes.size() > 1);
+    applyAppModeUi();
 }
 
 void MainWindow::refreshMeasureList()
@@ -546,9 +613,7 @@ void MainWindow::refreshMeasureList()
     const auto *recipe = m_projectService->activeRecipe();
     if (!recipe) {
         m_updatingLists = false;
-        m_removeMeasureBtn->setEnabled(false);
-        m_editMeasureBtn->setEnabled(false);
-        m_drawMeasureRoiBtn->setEnabled(false);
+        applyAppModeUi();
         refreshMeasureProperties();
         return;
     }
@@ -569,9 +634,7 @@ void MainWindow::refreshMeasureList()
         m_measureList->setCurrentRow(selectRow);
     }
     m_updatingLists = false;
-    m_removeMeasureBtn->setEnabled(!m_running && m_measureList->count() > 0);
-    m_editMeasureBtn->setEnabled(!m_running && m_measureList->count() > 0);
-    m_drawMeasureRoiBtn->setEnabled(!m_running && m_measureList->count() > 0);
+    applyAppModeUi();
     refreshMeasureProperties();
 }
 
@@ -592,28 +655,28 @@ void MainWindow::refreshMeasureProperties()
     }
 
     const auto &m = recipe->measures.at(idx);
-    const QString geometryText =
-        QStringLiteral("  row=%1  col=%2  phi=%3\n  length1=%4  length2=%5")
-            .arg(m.geometry.row)
-            .arg(m.geometry.column)
-            .arg(m.geometry.phi)
-            .arg(m.geometry.length1)
-            .arg(m.geometry.length2);
-    m_propertyPanel->setPlainText(
-        tr("名称: %1\n"
-           "类型: %2\n"
-           "名义值: %3\n"
-           "上公差: %4\n"
-           "下公差: %5\n"
-           "小数位: %6\n"
-           "几何(相对模板):\n"
-           "%7")
-            .arg(m.name, Me::measureTypeToString(m.type))
-            .arg(m.nominal)
-            .arg(m.upper)
-            .arg(m.lower)
-            .arg(m.decimals)
-            .arg(geometryText));
+    const int dec = qBound(0, m.decimals, 6);
+    // 避免 QString::arg 链式替换触发 MaxSize 断言：全部用拼接
+    QString text;
+    text += tr("名称: %1\n").arg(m.name);
+    text += tr("类型: %1\n").arg(Me::measureTypeToString(m.type));
+    text += tr("名义值: %1\n").arg(m.nominal, 0, 'f', dec);
+    text += tr("上公差: %1\n").arg(m.upper, 0, 'f', dec);
+    text += tr("下公差: %1\n").arg(m.lower, 0, 'f', dec);
+    text += tr("小数位: %1\n").arg(dec);
+    text += tr("几何(相对模板):\n");
+    text += QStringLiteral("  row=%1  col=%2  phi=%3\n")
+                .arg(m.geometry.row, 0, 'f', 3)
+                .arg(m.geometry.column, 0, 'f', 3)
+                .arg(m.geometry.phi, 0, 'f', 4);
+    text += QStringLiteral("  length1=%1  length2=%2  angleExtent=%3\n")
+                .arg(m.geometry.length1, 0, 'f', 3)
+                .arg(m.geometry.length2, 0, 'f', 3)
+                .arg(m.geometry.angleExtent, 0, 'f', 4);
+    text += QStringLiteral("  refA=%1  refB=%2")
+                .arg(m.refIdA.isEmpty() ? QStringLiteral("-") : m.refIdA,
+                     m.refIdB.isEmpty() ? QStringLiteral("-") : m.refIdB);
+    m_propertyPanel->setPlainText(text);
 }
 
 QImage MainWindow::makeOverlayImage(const QImage &source, const Me::CycleResult &result) const
@@ -798,6 +861,7 @@ void MainWindow::onLoadImage()
         return;
     }
     m_currentImage = img;
+    m_currentImagePath = path;
     m_imageView->setImage(img);
     qInfo().noquote() << tr("已加载图像: %1").arg(path);
     updateImageSourceStatus(path);
@@ -946,29 +1010,49 @@ void MainWindow::onDrawMeasureRoi()
     const Me::MeasureItem measureCopy = recipe->measures.at(idx);
     const QRectF roiRect = m_imageView->roiImageRect();
 
+    const auto t = measureCopy.type;
+    if (t == MeasureType::PointToLine || t == MeasureType::LineIntersection
+        || t == MeasureType::Angle || t == MeasureType::PointDistance) {
+        QMessageBox::information(this, tr("提示"),
+                                 tr("派生测量项通过编辑对话框设置引用 A/B，无需画 ROI。"));
+        return;
+    }
+
     // 第一次：进入编辑；第二次：确认写入相对模板几何
     if (m_roiEditMode != RoiEditMode::MeasureCaliper) {
         const Me::AlignmentResult align =
             Me::AlignmentService::find(m_currentImage, alignCfg, projectDir(), false);
         QRectF seed;
         if (align.ok) {
-            seed = measureGeometryToImageRect(measureCopy.geometry, align);
+            seed = measureGeometryToImageRect(measureCopy.geometry, align, measureCopy.type);
             qInfo().noquote() << tr("已按当前定位位姿投影卡尺框 (score=%1)")
                                      .arg(align.score, 0, 'f', 3);
         } else {
             const int w = m_currentImage.width();
             const int h = m_currentImage.height();
-            seed = QRectF(w * 0.35, h * 0.45, w * 0.3, h * 0.08);
+            if (measureCopy.type == MeasureType::FindCircle) {
+                const double side = qMin(w, h) * 0.3;
+                seed = QRectF((w - side) * 0.5, (h - side) * 0.5, side, side);
+            } else {
+                seed = QRectF(w * 0.35, h * 0.45, w * 0.3, h * 0.08);
+            }
             qWarning().noquote() << tr("当前图定位失败，先给默认卡尺框；确认时需定位成功。%1")
                                         .arg(align.message);
         }
+        // 先设形状再设矩形，保证找圆显示为正圆
+        m_imageView->setRoiShape(measureCopy.type == MeasureType::FindCircle
+                                     ? RoiRectItem::Shape::Circle
+                                     : RoiRectItem::Shape::Rectangle);
         m_imageView->setRoiImageRect(seed);
         enterRoiEditMode(true);
         return;
     }
 
     if (!m_imageView->hasRoi()) {
-        QMessageBox::information(this, tr("提示"), tr("请先在主图上画出有效的卡尺矩形。"));
+        QMessageBox::information(this, tr("提示"),
+                                 measureCopy.type == MeasureType::FindCircle
+                                     ? tr("请先在主图上画出有效的圆形 ROI。")
+                                     : tr("请先在主图上画出有效的卡尺矩形。"));
         return;
     }
 
@@ -983,8 +1067,27 @@ void MainWindow::onDrawMeasureRoi()
 
     Me::CaliperGeometry geo;
     if (!imageRectToMeasureGeometry(roiRect, align, &geo)) {
-        QMessageBox::warning(this, tr("无法换算"), tr("卡尺矩形无效。"));
+        QMessageBox::warning(this, tr("无法换算"), tr("卡尺 ROI 无效。"));
         return;
+    }
+    // 找圆：正圆外径 → 半径 length1 + 环宽 length2
+    if (measureCopy.type == MeasureType::FindCircle) {
+        const QRectF r = roiRect.normalized();
+        const double outerR = qMax(4.0, qMin(r.width(), r.height()) * 0.5);
+        double ann = measureCopy.geometry.length2;
+        if (!(ann > 0.0) || ann >= outerR) {
+            ann = qMax(2.0, outerR * 0.15);
+        }
+        if (ann >= outerR) {
+            ann = qMax(2.0, outerR * 0.15);
+        }
+        geo.length1 = qMax(2.0, outerR - ann);
+        geo.length2 = ann;
+        geo.angleExtent = measureCopy.geometry.angleExtent > 0
+            ? measureCopy.geometry.angleExtent
+            : 6.283185307179586;
+    } else {
+        geo.angleExtent = measureCopy.geometry.angleExtent;
     }
     if (!qIsFinite(geo.row) || !qIsFinite(geo.column) || !qIsFinite(geo.phi)
         || !qIsFinite(geo.length1) || !qIsFinite(geo.length2)
@@ -1020,13 +1123,14 @@ void MainWindow::onDrawMeasureRoi()
     mr.imagePhi = 0.0; // 确认框为图像轴对齐
     mr.length1 = geo.length1;
     mr.length2 = geo.length2;
-    mr.message = tr("卡尺ROI已更新");
+    mr.angleExtent = geo.angleExtent;
+    mr.message = tr("测量ROI已更新");
     preview.measures.push_back(mr);
     preview.totalOk = true;
-    preview.reason = tr("卡尺ROI已写入相对模板坐标");
+    preview.reason = tr("测量ROI已写入相对模板坐标");
     m_imageView->setImage(Me::ResultOverlay::render(m_currentImage, preview));
 
-    qInfo().noquote() << tr("卡尺 ROI 已更新: %1  row=%2 col=%3 phi=%4 L1=%5 L2=%6")
+    qInfo().noquote() << tr("测量 ROI 已更新: %1  row=%2 col=%3 phi=%4 L1=%5 L2=%6")
                              .arg(item.name)
                              .arg(geo.row, 0, 'f', 2)
                              .arg(geo.column, 0, 'f', 2)
@@ -1052,46 +1156,140 @@ void MainWindow::onEditMeasure()
         return;
     }
 
-    EditMeasureDialog dlg(recipe->measures.at(idx), this);
-    if (dlg.exec() != QDialog::Accepted) {
-        return;
-    }
-    Me::MeasureItem item = dlg.result();
+    // 拷贝，避免对话框打开期间 structureChanged 导致引用失效
+    const Me::MeasureItem itemCopy = recipe->measures.at(idx);
+    const QVector<Me::MeasureItem> siblingsCopy = recipe->measures;
+
+    Me::MeasureItem item;
+    {
+        EditMeasureDialog dlg(itemCopy, siblingsCopy, this);
+        const int code = dlg.exec();
+        if (code != QDialog::Accepted) {
+            return;
+        }
+        item = dlg.result();
+    } // 对话框先销毁，再写回工程，避免关窗重入
+
     if (item.name.isEmpty()) {
         item.name = tr("测量项");
     }
-    // 单位跟随工程标定
-    item.unit = m_projectService->project().calibration.calibrated
-        ? m_projectService->project().calibration.unit
-        : QStringLiteral("px");
+    if (item.type == MeasureType::Angle) {
+        item.unit = QStringLiteral("deg");
+    } else {
+        item.unit = m_projectService->project().calibration.calibrated
+            ? m_projectService->project().calibration.unit
+            : QStringLiteral("px");
+    }
     m_projectService->updateMeasure(recipeId, item);
     updateWindowTitle();
 }
 
 void MainWindow::onRunOnce()
 {
-    if (m_running) {
+    if (m_busy || m_continuous) {
         return;
     }
-    if (m_currentImage.isNull()) {
-        QMessageBox::information(this, tr("提示"), tr("请先加载图像。"));
+    QString fail;
+    if (!prepareRun(&fail)) {
+        QMessageBox::information(this, tr("提示"), fail);
         return;
     }
-    const auto *recipe = m_projectService->activeRecipe();
-    if (!recipe) {
+    m_stopRequested = false;
+    qInfo().noquote() << tr("开始单次试跑...");
+    dispatchRunOnce();
+}
+
+void MainWindow::onContinuousRun()
+{
+    if (m_busy || m_continuous) {
         return;
     }
-    if (recipe->alignment.modelFile.isEmpty()) {
-        QMessageBox::information(this, tr("提示"), tr("请先创建定位模板。"));
+    QString fail;
+    if (!prepareRun(&fail)) {
+        QMessageBox::information(this, tr("提示"), fail);
         return;
     }
-    if (recipe->measures.isEmpty()) {
-        QMessageBox::information(this, tr("提示"), tr("请先添加测量项。"));
+    if (m_sourceThumbs->count() <= 0) {
+        QMessageBox::information(this, tr("提示"), tr("连续运行需要先加载图像文件夹。"));
         return;
     }
 
-    setRunningUi(true);
-    qInfo().noquote() << tr("开始单次试跑...");
+    m_continuous = true;
+    m_stopRequested = false;
+    applyAppModeUi();
+    updateCalibrationStatus();
+    qInfo().noquote() << tr("开始连续运行（文件夹序列循环，点停止结束）...");
+    dispatchRunOnce();
+}
+
+void MainWindow::onStopRun()
+{
+    if (!m_busy && !m_continuous) {
+        return;
+    }
+    m_stopRequested = true;
+    m_continuous = false;
+    applyAppModeUi();
+    updateCalibrationStatus();
+    qInfo().noquote() << tr("已请求停止，等待当前周期结束...");
+}
+
+void MainWindow::onToggleEditRunMode()
+{
+    if (m_busy || m_continuous) {
+        return;
+    }
+    if (m_roiEditMode != RoiEditMode::None) {
+        QMessageBox::information(this, tr("提示"), tr("请先结束 ROI 编辑。"));
+        return;
+    }
+    m_appMode = (m_appMode == AppMode::Edit) ? AppMode::Run : AppMode::Edit;
+    applyAppModeUi();
+    updateCalibrationStatus();
+    qInfo().noquote() << ((m_appMode == AppMode::Edit)
+                              ? tr("已切换到编辑模式（试跑默认不写 CSV）")
+                              : tr("已切换到运行模式（试跑/连续将写 CSV）"));
+}
+
+bool MainWindow::prepareRun(QString *failReason) const
+{
+    if (m_currentImage.isNull()) {
+        if (failReason) {
+            *failReason = tr("请先加载图像。");
+        }
+        return false;
+    }
+    const auto *recipe = m_projectService->activeRecipe();
+    if (!recipe) {
+        if (failReason) {
+            *failReason = tr("无可用配方。");
+        }
+        return false;
+    }
+    if (recipe->alignment.modelFile.isEmpty()) {
+        if (failReason) {
+            *failReason = tr("请先创建定位模板。");
+        }
+        return false;
+    }
+    if (recipe->measures.isEmpty()) {
+        if (failReason) {
+            *failReason = tr("请先添加测量项。");
+        }
+        return false;
+    }
+    return true;
+}
+
+void MainWindow::dispatchRunOnce()
+{
+    const auto *recipe = m_projectService->activeRecipe();
+    if (!recipe) {
+        m_continuous = false;
+        setBusyUi(false);
+        return;
+    }
+    setBusyUi(true);
     QMetaObject::invokeMethod(m_runEngine,
                               "runOnce",
                               Qt::QueuedConnection,
@@ -1101,10 +1299,53 @@ void MainWindow::onRunOnce()
                               Q_ARG(QString, projectDir()));
 }
 
+void MainWindow::maybeWriteCsv(const Me::CycleResult &result)
+{
+    // 运行模式必写；编辑模式不写（符合实施文档）
+    if (m_appMode != AppMode::Run) {
+        return;
+    }
+    const auto *recipe = m_projectService->activeRecipe();
+    const QString recipeName = recipe ? recipe->name : tr("未知配方");
+    QString error;
+    const QString path = Me::CsvResultStore::defaultFilePath();
+    if (!Me::CsvResultStore::append(path, recipeName, m_currentImagePath, result, &error)) {
+        qWarning().noquote() << tr("CSV 写入失败: %1").arg(error);
+        return;
+    }
+    qInfo().noquote() << tr("已追加 CSV: %1").arg(path);
+}
+
 void MainWindow::onCycleFinished(const Me::CycleResult &result)
 {
-    setRunningUi(false);
     applyCycleResult(result);
+    maybeWriteCsv(result);
+
+    if (m_stopRequested || !m_continuous) {
+        m_continuous = false;
+        m_stopRequested = false;
+        setBusyUi(false);
+        return;
+    }
+
+    // 连续：切下一张（到末尾则回到第一张）再跑
+    if (m_sourceThumbs->count() <= 0) {
+        m_continuous = false;
+        setBusyUi(false);
+        qWarning().noquote() << tr("连续运行中断：无图像");
+        return;
+    }
+    m_sourceThumbs->selectNext();
+    // selectNext 会同步更新 m_currentImage
+    setBusyUi(false); // 短暂释放，再派发下一轮
+    if (m_stopRequested) {
+        m_continuous = false;
+        m_stopRequested = false;
+        applyAppModeUi();
+        return;
+    }
+    m_continuous = true;
+    dispatchRunOnce();
 }
 
 void MainWindow::onRunError(const QString &message)
@@ -1120,19 +1361,14 @@ void MainWindow::onThumbImageChanged(const QImage &image)
 
 void MainWindow::onThumbPathChanged(const QString &path)
 {
+    m_currentImagePath = path;
     updateImageSourceStatus(path);
     qInfo().noquote() << tr("当前图像: %1").arg(QFileInfo(path).fileName());
 }
 
 void MainWindow::onRecipeSelectionChanged()
 {
-    if (m_updatingLists) {
-        return;
-    }
-    const QString id = selectedRecipeId();
-    if (!id.isEmpty()) {
-        m_projectService->setActiveRecipeId(id);
-    }
+    // 配方改由「管理配方」对话框切换，此处保留槽以兼容旧连接。
     refreshMeasureList();
 }
 
@@ -1149,34 +1385,27 @@ void MainWindow::onMeasureDoubleClicked()
     onEditMeasure();
 }
 
-void MainWindow::onAddRecipe()
+void MainWindow::onManageRecipes()
 {
-    bool ok = false;
-    const QString name = QInputDialog::getText(
-        this, tr("添加配方"), tr("配方名称:"), QLineEdit::Normal, tr("新配方"), &ok);
-    if (!ok || name.trimmed().isEmpty()) {
+    if (m_appMode != AppMode::Edit || m_busy || m_continuous) {
+        QMessageBox::information(this, tr("提示"), tr("请在编辑模式下管理配方。"));
         return;
     }
-    m_projectService->addRecipe(name.trimmed());
+    ManageRecipesDialog dlg(m_projectService, this);
+    dlg.exec();
+    refreshRecipeList();
+    refreshMeasureList();
     updateWindowTitle();
+}
+
+void MainWindow::onAddRecipe()
+{
+    onManageRecipes();
 }
 
 void MainWindow::onRemoveRecipe()
 {
-    const QString id = selectedRecipeId();
-    if (id.isEmpty()) {
-        return;
-    }
-    if (m_projectService->project().recipes.size() <= 1) {
-        QMessageBox::information(this, tr("提示"), tr("至少保留一个配方。"));
-        return;
-    }
-    if (QMessageBox::question(this, tr("删除配方"), tr("确定删除当前配方？"))
-        != QMessageBox::Yes) {
-        return;
-    }
-    m_projectService->removeRecipe(id);
-    updateWindowTitle();
+    onManageRecipes();
 }
 
 void MainWindow::onAddMeasure()
@@ -1185,36 +1414,59 @@ void MainWindow::onAddMeasure()
     if (recipeId.isEmpty()) {
         return;
     }
-    bool ok = false;
-    const QString name = QInputDialog::getText(
-        this, tr("添加测量项"), tr("测量项名称:"), QLineEdit::Normal, tr("宽度1"), &ok);
-    if (!ok || name.trimmed().isEmpty()) {
-        return;
-    }
-    const QString id = m_projectService->addMeasure(recipeId, name.trimmed(), MeasureType::CaliperWidth);
-    // 给一个可用的默认几何（相对模板原点偏置）
-    if (!id.isEmpty()) {
-        auto *recipe = m_projectService->project().findRecipe(recipeId);
-        if (recipe) {
-            const int idx = recipe->indexOfMeasure(id);
-            if (idx >= 0) {
-                Me::MeasureItem item = recipe->measures.at(idx);
-                item.geometry.row = 0;
-                item.geometry.column = 60;
-                item.geometry.phi = 0;
-                item.geometry.length1 = 40;
-                item.geometry.length2 = 8;
-                item.nominal = 20;
-                item.upper = 5;
-                item.lower = -5;
-                item.unit = m_projectService->project().calibration.calibrated
-                    ? m_projectService->project().calibration.unit
-                    : QStringLiteral("px");
-                m_projectService->updateMeasure(recipeId, item);
-            }
+
+    const auto *recipe = m_projectService->project().findRecipe(recipeId);
+    const int seq = recipe ? recipe->measures.size() + 1 : 1;
+    const QString name = tr("测量%1").arg(seq);
+
+    Me::MeasureItem draft = Me::MeasureItem::createDefault(name);
+    draft.geometry.row = 0;
+    draft.geometry.column = 60;
+    draft.geometry.phi = 0;
+    draft.geometry.length1 = 40.0;
+    draft.geometry.length2 = 8.0;
+    draft.geometry.angleExtent = 6.283185307179586;
+    draft.nominal = 20.0;
+    draft.upper = 5;
+    draft.lower = -5;
+    draft.decimals = 3;
+    draft.unit = m_projectService->project().calibration.calibrated
+        ? m_projectService->project().calibration.unit
+        : QStringLiteral("px");
+
+    Me::MeasureItem item;
+    {
+        EditMeasureDialog dlg(draft, recipe ? recipe->measures : QVector<Me::MeasureItem>{}, this);
+        dlg.setWindowTitle(tr("添加测量项"));
+        if (dlg.exec() != QDialog::Accepted) {
+            return;
         }
+        item = dlg.result();
     }
-    updateWindowTitle();
+
+    if (item.name.isEmpty()) {
+        item.name = name;
+    }
+    if (item.type == MeasureType::Angle) {
+        item.unit = QStringLiteral("deg");
+    } else {
+        item.unit = m_projectService->project().calibration.calibrated
+            ? m_projectService->project().calibration.unit
+            : QStringLiteral("px");
+    }
+
+    // 对话框销毁后再写模型，避免关窗与列表刷新重入。
+    QTimer::singleShot(0, this, [this, recipeId, item]() mutable {
+        const QString id = m_projectService->addMeasure(recipeId, item.name, item.type);
+        if (id.isEmpty()) {
+            return;
+        }
+        item.id = id;
+        m_projectService->updateMeasure(recipeId, item);
+        updateWindowTitle();
+        qInfo().noquote() << tr("已添加测量项: %1 (%2)")
+                                 .arg(item.name, Me::measureTypeToString(item.type));
+    });
 }
 
 void MainWindow::onRemoveMeasure()

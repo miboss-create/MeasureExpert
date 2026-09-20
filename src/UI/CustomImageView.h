@@ -7,6 +7,8 @@
 #include <QString>
 #include <QWidget>
 
+#include "UI/RoiRectItem.h"
+
 class CustomGraphicsView;
 
 // 对外图像窗口：显示 QImage，支持缩放拖拽与 ROI 编辑
@@ -24,6 +26,8 @@ public:
     bool isRoiEditEnabled() const;
     bool isRoiDrawing() const;
     void setRoiStyle(const QColor &color, const QString &label);
+    void setRoiShape(RoiRectItem::Shape shape);
+    RoiRectItem::Shape roiShape() const;
     QRectF roiImageRect() const; // x=col, y=row
     void setRoiImageRect(const QRectF &rect);
     void clearRoi();

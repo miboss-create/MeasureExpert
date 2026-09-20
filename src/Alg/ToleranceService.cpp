@@ -3,6 +3,15 @@
 #include <QStringList>
 
 namespace Me {
+namespace {
+
+bool isGeometryPassThrough(MeasureType type)
+{
+    return type == MeasureType::FindLine
+        || type == MeasureType::LineIntersection;
+}
+
+} // namespace
 
 bool ToleranceService::judgeItem(MeasureResult &result)
 {
@@ -14,10 +23,16 @@ bool ToleranceService::judgeItem(MeasureResult &result)
         return false;
     }
 
+    // 找线 / 交点：作为中间几何，找到即合格
+    if (isGeometryPassThrough(result.type)) {
+        result.ok = true;
+        return true;
+    }
+
     const double lo = result.nominal + result.lower;
     const double hi = result.nominal + result.upper;
     result.ok = (result.value >= lo && result.value <= hi);
-    if (!result.ok && result.message == QStringLiteral("测量完成")) {
+    if (!result.ok) {
         result.message = QStringLiteral("超差");
     }
     return result.ok;

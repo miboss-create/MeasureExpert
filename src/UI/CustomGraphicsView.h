@@ -8,9 +8,10 @@
 #include <QRectF>
 #include <QString>
 
+#include "UI/RoiRectItem.h"
+
 class QLabel;
 class CustomImageItem;
-class RoiRectItem;
 
 // 视觉窗口核心：缩放 / 拖拽 / 双击复位 / ROI 编辑
 // ROI 交互（类 HALCON）：
@@ -31,6 +32,10 @@ public:
     bool isRoiEditEnabled() const { return m_roiEditEnabled; }
     bool isRoiDrawing() const { return m_roiEditEnabled && m_roiDrawing; }
     void setRoiStyle(const QColor &color, const QString &label);
+
+    // Rectangle=矩形卡尺；Circle=找圆（正圆）
+    void setRoiShape(RoiRectItem::Shape shape);
+    RoiRectItem::Shape roiShape() const;
 
     // 图像像素坐标矩形 (x=col, y=row, width, height)
     QRectF roiImageRect() const;
@@ -86,6 +91,7 @@ private:
     DragMode m_savedDragMode = ScrollHandDrag;
     QColor m_roiColor = QColor(0, 220, 120);
     QString m_roiLabel = QStringLiteral("ROI");
+    RoiRectItem::Shape m_roiShape = RoiRectItem::Shape::Rectangle;
 };
 
 #endif // CUSTOMGRAPHICSVIEW_H

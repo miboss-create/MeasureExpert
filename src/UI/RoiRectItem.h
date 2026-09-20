@@ -3,24 +3,35 @@
 
 #include <QColor>
 #include <QGraphicsObject>
+#include <QPainterPath>
 #include <QRectF>
 #include <QString>
 
-// 可移动、可拖拽边角调整的轴对齐 ROI 矩形（场景坐标 = 图像像素坐标）
+// 可移动、可拖拽边角调整的 ROI（场景坐标 = 图像像素坐标）
+// Rectangle：轴对齐矩形；Circle：正圆（外接正方形约束，绘制为圆）
 class RoiRectItem : public QGraphicsObject
 {
     Q_OBJECT
 public:
+    enum class Shape {
+        Rectangle,
+        Circle
+    };
+
     explicit RoiRectItem(QGraphicsItem *parent = nullptr);
 
-    QRectF roiRect() const; // 场景坐标下的矩形
+    QRectF roiRect() const; // 场景坐标下的外接矩形
     void setRoiRect(const QRectF &rect);
+
+    void setShape(Shape shape);
+    Shape shapeMode() const { return m_shape; }
 
     void setImageBounds(const QRectF &bounds);
     void setActive(bool active);
     void setStyle(const QColor &color, const QString &label);
 
     QRectF boundingRect() const override;
+    QPainterPath shape() const override;
     void paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget) override;
 
 signals:
@@ -51,9 +62,11 @@ private:
     QRectF handleRect(Handle h) const;
     void updateCursor(Handle h);
     QRectF clampToBounds(QRectF rect) const;
+    QRectF enforceShape(QRectF rect) const;
     void normalizeRect();
 
-    QRectF m_rect; // item 局部坐标，origin 在 (0,0)，用 setPos 不偏移，直接用场景矩形
+    Shape m_shape = Shape::Rectangle;
+    QRectF m_rect;
     QRectF m_imageBounds;
     Handle m_activeHandle = None;
     Handle m_hoverHandle = None;

@@ -65,6 +65,16 @@ void CustomImageView::setRoiStyle(const QColor &color, const QString &label)
     m_graphicsView->setRoiStyle(color, label);
 }
 
+void CustomImageView::setRoiShape(RoiRectItem::Shape shape)
+{
+    m_graphicsView->setRoiShape(shape);
+}
+
+RoiRectItem::Shape CustomImageView::roiShape() const
+{
+    return m_graphicsView->roiShape();
+}
+
 QRectF CustomImageView::roiImageRect() const
 {
     return m_graphicsView->roiImageRect();

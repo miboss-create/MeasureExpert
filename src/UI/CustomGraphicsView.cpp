@@ -89,10 +89,12 @@ void CustomGraphicsView::ensureRoiItem()
 {
     if (m_roiItem) {
         m_roiItem->setStyle(m_roiColor, m_roiLabel);
+        m_roiItem->setShape(m_roiShape);
         return;
     }
     m_roiItem = new RoiRectItem();
     m_roiItem->setStyle(m_roiColor, m_roiLabel);
+    m_roiItem->setShape(m_roiShape);
     m_scene->addItem(m_roiItem);
     connect(m_roiItem, &RoiRectItem::roiChanged, this, [this](const QRectF &r) {
         emit roiChanged(r);
@@ -108,12 +110,25 @@ void CustomGraphicsView::setRoiStyle(const QColor &color, const QString &label)
     }
 }
 
+void CustomGraphicsView::setRoiShape(RoiRectItem::Shape shape)
+{
+    m_roiShape = shape;
+    ensureRoiItem();
+    m_roiItem->setShape(shape);
+}
+
+RoiRectItem::Shape CustomGraphicsView::roiShape() const
+{
+    return m_roiItem ? m_roiItem->shapeMode() : m_roiShape;
+}
+
 bool CustomGraphicsView::hitRoi(const QPointF &scenePos) const
 {
     if (!m_roiItem || !m_roiItem->isVisible() || m_roiItem->roiRect().isEmpty()) {
         return false;
     }
-    return m_roiItem->contains(m_roiItem->mapFromScene(scenePos));
+    // 必须含手柄外扩区：圆的 shape() 是椭圆，方框角点手柄在圆外，否则确认后拖手柄会被当成拖图
+    return m_roiItem->sceneBoundingRect().contains(scenePos);
 }
 
 void CustomGraphicsView::enterRoiDrawing()
@@ -327,7 +342,17 @@ void CustomGraphicsView::mouseMoveEvent(QMouseEvent *event)
 {
     if (m_drawingRoi && m_roiItem) {
         const QPointF scenePos = mapToScene(event->pos());
-        QRectF r = QRectF(m_drawStartScene, scenePos).normalized();
+        QRectF r;
+        if (m_roiShape == RoiRectItem::Shape::Circle) {
+            // 从起点拖出正方形，保证正圆
+            const QPointF d = scenePos - m_drawStartScene;
+            const double side = qMax(4.0, qMax(qAbs(d.x()), qAbs(d.y())));
+            const double sx = (d.x() >= 0.0) ? 1.0 : -1.0;
+            const double sy = (d.y() >= 0.0) ? 1.0 : -1.0;
+            r = QRectF(m_drawStartScene, m_drawStartScene + QPointF(sx * side, sy * side)).normalized();
+        } else {
+            r = QRectF(m_drawStartScene, scenePos).normalized();
+        }
         m_roiItem->setRoiRect(r);
         event->accept();
         return;

@@ -43,6 +43,16 @@ QString measureTypeToString(MeasureType type)
         return QStringLiteral("CaliperWidth");
     case MeasureType::CaliperDiameter:
         return QStringLiteral("CaliperDiameter");
+    case MeasureType::FindLine:
+        return QStringLiteral("FindLine");
+    case MeasureType::FindCircle:
+        return QStringLiteral("FindCircle");
+    case MeasureType::PointToLine:
+        return QStringLiteral("PointToLine");
+    case MeasureType::LineIntersection:
+        return QStringLiteral("LineIntersection");
+    case MeasureType::Angle:
+        return QStringLiteral("Angle");
     case MeasureType::PointDistance:
         return QStringLiteral("PointDistance");
     }
@@ -59,6 +69,21 @@ MeasureType measureTypeFromString(const QString &text, bool *ok)
     }
     if (text == QLatin1String("CaliperDiameter")) {
         return MeasureType::CaliperDiameter;
+    }
+    if (text == QLatin1String("FindLine")) {
+        return MeasureType::FindLine;
+    }
+    if (text == QLatin1String("FindCircle")) {
+        return MeasureType::FindCircle;
+    }
+    if (text == QLatin1String("PointToLine")) {
+        return MeasureType::PointToLine;
+    }
+    if (text == QLatin1String("LineIntersection")) {
+        return MeasureType::LineIntersection;
+    }
+    if (text == QLatin1String("Angle")) {
+        return MeasureType::Angle;
     }
     if (text == QLatin1String("PointDistance")) {
         return MeasureType::PointDistance;
@@ -147,6 +172,7 @@ QJsonObject CaliperGeometry::toJson() const
     obj.insert(QStringLiteral("phi"), phi);
     obj.insert(QStringLiteral("length1"), length1);
     obj.insert(QStringLiteral("length2"), length2);
+    obj.insert(QStringLiteral("angleExtent"), angleExtent);
     return obj;
 }
 
@@ -158,6 +184,7 @@ CaliperGeometry CaliperGeometry::fromJson(const QJsonObject &obj)
     g.phi = jsonDouble(obj, "phi", 0.0);
     g.length1 = jsonDouble(obj, "length1", 50.0);
     g.length2 = jsonDouble(obj, "length2", 20.0);
+    g.angleExtent = jsonDouble(obj, "angleExtent", 6.283185307179586);
     return g;
 }
 
@@ -179,6 +206,8 @@ QJsonObject MeasureItem::toJson() const
     obj.insert(QStringLiteral("name"), name);
     obj.insert(QStringLiteral("type"), measureTypeToString(type));
     obj.insert(QStringLiteral("geometry"), geometry.toJson());
+    obj.insert(QStringLiteral("refIdA"), refIdA);
+    obj.insert(QStringLiteral("refIdB"), refIdB);
     obj.insert(QStringLiteral("nominal"), nominal);
     obj.insert(QStringLiteral("upper"), upper);
     obj.insert(QStringLiteral("lower"), lower);
@@ -194,6 +223,8 @@ MeasureItem MeasureItem::fromJson(const QJsonObject &obj)
     item.name = jsonString(obj, "name", QStringLiteral("测量项"));
     item.type = measureTypeFromString(jsonString(obj, "type", QStringLiteral("CaliperWidth")));
     item.geometry = CaliperGeometry::fromJson(obj.value(QStringLiteral("geometry")).toObject());
+    item.refIdA = jsonString(obj, "refIdA");
+    item.refIdB = jsonString(obj, "refIdB");
     item.nominal = jsonDouble(obj, "nominal", 0.0);
     item.upper = jsonDouble(obj, "upper", 0.0);
     item.lower = jsonDouble(obj, "lower", 0.0);

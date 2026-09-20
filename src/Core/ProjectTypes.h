@@ -22,6 +22,11 @@ enum class ImageSourceType {
 enum class MeasureType {
     CaliperWidth,
     CaliperDiameter,
+    FindLine,
+    FindCircle,
+    PointToLine,
+    LineIntersection,
+    Angle,
     PointDistance
 };
 
@@ -49,9 +54,10 @@ struct AlignmentConfig {
 struct CaliperGeometry {
     double row = 0.0;
     double column = 0.0;
-    double phi = 0.0;     // rad，相对模板
-    double length1 = 50.0;
-    double length2 = 20.0;
+    double phi = 0.0;     // rad，相对模板；找圆时为圆弧起始角
+    double length1 = 50.0; // 矩形半长 / 圆半径
+    double length2 = 20.0; // 矩形半宽 / 圆环半宽(AnnulusRadius)
+    double angleExtent = 6.283185307179586; // 找圆：弧角范围（rad），默认整周
 
     QJsonObject toJson() const;
     static CaliperGeometry fromJson(const QJsonObject &obj);
@@ -62,6 +68,9 @@ struct MeasureItem {
     QString name;
     MeasureType type = MeasureType::CaliperWidth;
     CaliperGeometry geometry;
+    /// 派生测量引用的前序步骤 id（点线距/交点/夹角/点距）
+    QString refIdA;
+    QString refIdB;
     double nominal = 0.0;
     double upper = 0.0;
     double lower = 0.0;

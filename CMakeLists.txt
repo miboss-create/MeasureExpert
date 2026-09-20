@@ -75,7 +75,25 @@ qt_add_executable(MeasureExpert
     src/Core/ProjectTypes.h
     src/Core/ProjectService.cpp
     src/Core/ProjectService.h
+    src/Core/CsvResultStore.cpp
+    src/Core/CsvResultStore.h
+    src/Core/IImageSource.h
+    src/Core/ICommIO.h
     src/Alg/AlgTypes.h
+    src/Alg/ITool.h
+    src/Alg/ToolCommon.h
+    src/Alg/ToolRegistry.cpp
+    src/Alg/ToolRegistry.h
+    src/Alg/AlignmentTool.cpp
+    src/Alg/AlignmentTool.h
+    src/Alg/CaliperTool.cpp
+    src/Alg/CaliperTool.h
+    src/Alg/FindLineTool.cpp
+    src/Alg/FindLineTool.h
+    src/Alg/FindCircleTool.cpp
+    src/Alg/FindCircleTool.h
+    src/Alg/GeomDeriveTool.cpp
+    src/Alg/GeomDeriveTool.h
     src/Alg/AlignmentService.cpp
     src/Alg/AlignmentService.h
     src/Alg/MeasureService.cpp
@@ -92,6 +110,8 @@ qt_add_executable(MeasureExpert
     src/UI/TrainAlignmentDialog.h
     src/UI/EditMeasureDialog.cpp
     src/UI/EditMeasureDialog.h
+    src/UI/ManageRecipesDialog.cpp
+    src/UI/ManageRecipesDialog.h
     src/UI/CustomImageView.cpp
     src/UI/CustomImageView.h
     src/UI/CustomGraphicsView.cpp

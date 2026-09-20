@@ -1,14 +1,42 @@
 # MeasureExpert
 
-基于 **Qt Widgets + HALCON** 的工业通用测量专家（MVP）。
+基于 **Qt Widgets + HALCON** 的工业通用测量专家（工具箱 + 配方流水线）。
 
 详细规格见 [docs/实施文档.md](docs/实施文档.md)。  
+工具清单与 V1.5 范围见 [docs/工具地图.md](docs/工具地图.md)。  
 第三方库放置说明见 [docs/第三方依赖.md](docs/第三方依赖.md)。
 
-## 功能范围（MVP）
+## 功能范围（V1.5）
 
-- 配方驱动：采图 → 形状匹配定位 → 卡尺测量 → 公差判定 → CSV/日志
-- 编辑 / 运行模式；单工位；文件夹图像源优先（相机接口预留）
+- 配方驱动：文件夹采图 → 形状匹配定位 → 测量工具 → 公差判定
+- 工具箱：找线 / 找圆 / 卡尺宽度·直径 / 点线距·交点·夹角·点距
+- 编辑 / 运行模式；单次试跑与连续运行；运行模式写 CSV
+- 相机 / 通信接口已预留空实现（V2+）
+
+## 快速上手
+
+1. 构建并运行 `../MeasureExpert_runtime/MeasureExpert.exe`（或 `MeasureExpertD.exe`）
+2. **文件 → 新建工程** 并保存 `*.mexp.json`
+3. **加载文件夹**（如 HALCON `examples/images/board/`）
+4. **创建定位模板**：主图画 ROI → 右键确认 → 再点「确认训练模板」（角度建议 360°）
+5. **添加测量项**（宽度/直径/找线/找圆/派生）→ ROI 类工具画测量 ROI；派生项在编辑里设引用 A/B
+6. **单次试跑**看主图叠加与右侧 OK/NG
+7. 切到 **运行模式** 后再试跑/连续运行，结果写入 `results/yyyy-MM-dd.csv`
+
+### 编辑模式 vs 运行模式
+
+| | 编辑 | 运行 |
+|--|------|------|
+| 改配方 / 训练模板 / 画卡尺 | 可以 | 锁定 |
+| 单次 / 连续试跑 | 可以 | 可以 |
+| 写 CSV | 否 | 是 |
+
+### 连续运行
+
+在已加载文件夹的前提下点 **连续运行**：按缩略图顺序循环测图，点 **停止** 结束（当前周期会跑完）。
+
+CSV 路径：`MeasureExpert_runtime/results/yyyy-MM-dd.csv`  
+列：时间戳、配方、图像、总判定、耗时、原因、测量项名/值/单位/单项判定/消息。
 
 ## 环境依赖
 
@@ -18,7 +46,7 @@
 | MSVC | Visual Studio C++ 工具链 |
 | CMake | ≥ 3.19 |
 | HALCON | 头文件/库在 `3rdParty/Halcon`；运行需本机授权版 DLL（`bin` 加入 PATH） |
-| OpenCV | 与烛照相同：`find_package(OpenCV)`；优先 `3rdParty/OpenCV`（见 [docs/第三方依赖.md](docs/第三方依赖.md)） |
+| OpenCV | `find_package(OpenCV)`；优先 `3rdParty/OpenCV`（见 [docs/第三方依赖.md](docs/第三方依赖.md)） |
 
 ### 构建相关环境变量
 
@@ -34,25 +62,24 @@ set CMAKE_PREFIX_PATH=<你的 Qt>\6.x.x\msvc2022_64
 
 ```text
 .
-├── 3rdParty/                       # 本地自备，已 gitignore（Halcon / OpenCV）
+├── 3rdParty/          # 本地自备，已 gitignore（Halcon / OpenCV）
 ├── CMakeLists.txt
-├── CMakeUserPresets.json.example
-├── docs/实施文档.md
+├── docs/
 ├── scripts/build_msvc.bat
-├── src/
-│   ├── main.cpp
-│   ├── UI/          # 界面
-│   └── Alg/         # 后期算法
-└── 3rdParty/Halcon/
+└── src/
+    ├── Core/          # 工程 JSON、CSV、预留 ImageSource/CommIO
+    ├── Alg/           # 定位 / 测量 / 判定 / RunEngine
+    └── UI/            # 主界面
 ```
 
 源码旁的运行目录（不在仓库内）：
 
 ```text
 ../MeasureExpert_runtime/
-  MeasureExpert.exe      # Release
-  MeasureExpertD.exe     # Debug
-  .cmake/Debug|Release/  # CMake 中间文件
+  MeasureExpert.exe / MeasureExpertD.exe
+  results/             # CSV
+  log/                 # 按日日志
+  .cmake/Debug|Release/
 ```
 
 可用 `-DME_RUNTIME_DIR=<path>` 覆盖默认输出目录。
@@ -76,6 +103,13 @@ scripts\build_msvc.bat
 ```
 
 成功后在 `..\MeasureExpert_runtime\` 下可见 `MeasureExpertD.exe` 与 `MeasureExpert.exe`。
+
+## 推荐演示例程图
+
+| HALCON 例程 | 图目录 | 用途 |
+|-------------|--------|------|
+| `pm_measure_board` | `examples/images/board/` | 主演示：定位 + 双卡尺 |
+| `align_measurements` | `razors*` | 第二套定位+卡尺对照 |
 
 ## 许可证与 HALCON
 

@@ -31,6 +31,24 @@ struct AlignmentResult {
     QVector<Contour2D> modelContours;
 };
 
+struct LineGeom {
+    bool valid = false;
+    double rowBegin = 0.0;
+    double colBegin = 0.0;
+    double rowEnd = 0.0;
+    double colEnd = 0.0;
+    double nr = 0.0;   // 单位法向
+    double nc = 0.0;
+    double dist = 0.0; // 点到原点距离形式
+};
+
+struct CircleGeom {
+    bool valid = false;
+    double row = 0.0;
+    double col = 0.0;
+    double radius = 0.0;
+};
+
 struct MeasureResult {
     QString id;
     QString name;
@@ -44,16 +62,22 @@ struct MeasureResult {
     QString unit = QStringLiteral("px");
     int decimals = 3;
     QString message;
-    // 图像坐标系卡尺
+    // 图像坐标系卡尺 / 圆弧中心
     double imageRow = 0.0;
     double imageCol = 0.0;
     double imagePhi = 0.0;
     double length1 = 0.0;
     double length2 = 0.0;
-    // measure_pairs 边缘点（图像坐标）
+    double angleExtent = 0.0;
+    // measure_pairs / measure_pos 边缘点（图像坐标）
     QVector<Point2D> firstEdges;
     QVector<Point2D> secondEdges;
     int usedPairIndex = -1;
+    // 统一几何结果
+    LineGeom line;
+    CircleGeom circle;
+    Point2D point; // 交点或派生点
+    bool hasPoint = false;
 };
 
 struct CycleResult {

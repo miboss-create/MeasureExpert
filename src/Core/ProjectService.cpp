@@ -148,6 +148,7 @@ void ProjectService::setActiveRecipeId(const QString &recipeId, bool markAsDirty
     if (markAsDirty) {
         this->markDirty();
     }
+    emit structureChanged();
 }
 
 Recipe *ProjectService::activeRecipe()

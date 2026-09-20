@@ -12,6 +12,7 @@ class ProjectService;
 class RunEngine;
 }
 
+class QAction;
 class QCloseEvent;
 class QLabel;
 class QListWidget;
@@ -49,6 +50,9 @@ private slots:
     void onEditMeasure();
     void onDrawMeasureRoi();
     void onRunOnce();
+    void onContinuousRun();
+    void onStopRun();
+    void onToggleEditRunMode();
     void onCycleFinished(const Me::CycleResult &result);
     void onRunError(const QString &message);
     void onThumbImageChanged(const QImage &image);
@@ -58,12 +62,18 @@ private slots:
     void onMeasureDoubleClicked();
     void onAddRecipe();
     void onRemoveRecipe();
+    void onManageRecipes();
     void onAddMeasure();
     void onRemoveMeasure();
     void onProjectStructureChanged();
     void onDirtyChanged(bool dirty);
 
 private:
+    enum class AppMode {
+        Edit,
+        Run
+    };
+
     bool initWidget();
     void createMenus();
     void createToolBar();
@@ -83,12 +93,17 @@ private:
     QString selectedRecipeId() const;
     QString selectedMeasureId() const;
     QString projectDir() const;
-    void setRunningUi(bool running);
+    void setBusyUi(bool busy);
+    void applyAppModeUi();
+    bool prepareRun(QString *failReason = nullptr) const;
+    void dispatchRunOnce();
+    void maybeWriteCsv(const Me::CycleResult &result);
     void enterRoiEditMode(bool forMeasure);
     void leaveRoiEditMode(bool clearRoi);
     void updateRoiActionTexts();
     QRectF measureGeometryToImageRect(const Me::CaliperGeometry &geo,
-                                      const Me::AlignmentResult &align) const;
+                                      const Me::AlignmentResult &align,
+                                      Me::MeasureType type = Me::MeasureType::CaliperWidth) const;
     bool imageRectToMeasureGeometry(const QRectF &imageRect,
                                     const Me::AlignmentResult &align,
                                     Me::CaliperGeometry *out) const;
@@ -105,12 +120,16 @@ private:
     QAction *m_trainAlignAction = nullptr;
     QAction *m_drawMeasureRoiAction = nullptr;
     QAction *m_cancelRoiAction = nullptr;
+    QAction *m_runOnceAction = nullptr;
+    QAction *m_continuousAction = nullptr;
+    QAction *m_stopAction = nullptr;
+    QAction *m_modeToggleAction = nullptr;
+    QAction *m_manageRecipesAction = nullptr;
     RoiEditMode m_roiEditMode = RoiEditMode::None;
+    AppMode m_appMode = AppMode::Edit;
 
-    QListWidget *m_recipeList = nullptr;
+    QLabel *m_activeRecipeLabel = nullptr;
     QListWidget *m_measureList = nullptr;
-    QPushButton *m_addRecipeBtn = nullptr;
-    QPushButton *m_removeRecipeBtn = nullptr;
     QPushButton *m_addMeasureBtn = nullptr;
     QPushButton *m_removeMeasureBtn = nullptr;
     QPushButton *m_editMeasureBtn = nullptr;
@@ -126,8 +145,11 @@ private:
 
     QSplitter *m_mainSplitter = nullptr;
     bool m_updatingLists = false;
-    bool m_running = false;
+    bool m_busy = false;            // 单次/连续周期进行中
+    bool m_continuous = false;      // 连续运行
+    bool m_stopRequested = false;
     QString m_currentImageStatus;
+    QString m_currentImagePath;
     QImage m_currentImage;
 };
 
