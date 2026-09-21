@@ -13,6 +13,7 @@ MeasureResult MeasureService::runOne(const QImage &image,
     ctx.image = image;
     ctx.alignment = alignment;
     ctx.calibration = calibration;
+    ctx.followPose = false;
     return ToolRegistry::runMeasure(item, ctx);
 }
 
@@ -25,6 +26,7 @@ QVector<MeasureResult> MeasureService::runAll(const QImage &image,
     ctx.image = image;
     ctx.alignment = alignment;
     ctx.calibration = calibration;
+    ctx.followPose = !recipe.alignment.modelFile.isEmpty();
 
     QVector<MeasureResult> out;
     out.reserve(recipe.measures.size());

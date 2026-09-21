@@ -27,10 +27,6 @@ public:
 
 MeasureResult FindCircleTool::run(const MeasureItem &item, const ToolContext &ctx) const
 {
-    if (!ctx.alignment.ok) {
-        return failResult(item, QStringLiteral("定位失败，跳过找圆"));
-    }
-
     const double radius = item.geometry.length1;
     const double annulus = item.geometry.length2;
     if (!qIsFinite(radius) || !qIsFinite(annulus) || radius < 2.0 || annulus < 1.0) {
@@ -58,8 +54,10 @@ MeasureResult FindCircleTool::run(const MeasureItem &item, const ToolContext &ct
         double rowImg = 0.0;
         double colImg = 0.0;
         double phiImg = 0.0;
-        if (!resolveImageCaliper(item, ctx.alignment, &rowImg, &colImg, &phiImg)) {
-            return failResult(item, QStringLiteral("圆心坐标变换失败"));
+        if (!resolveImageCaliper(item, ctx.alignment, ctx.followPose, &rowImg, &colImg, &phiImg)) {
+            return failResult(item,
+                              ctx.followPose ? QStringLiteral("定位失败，无法跟随找圆 ROI")
+                                             : QStringLiteral("圆心坐标无效"));
         }
         if (!qIsFinite(rowImg) || !qIsFinite(colImg) || !qIsFinite(phiImg)) {
             return failResult(item, QStringLiteral("圆心坐标非有限值"));

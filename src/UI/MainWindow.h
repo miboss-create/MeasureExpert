@@ -79,6 +79,7 @@ private:
     void createToolBar();
     void createStatusBar();
     void setupRunEngine();
+    void shutdownRunEngine();
     void updateWindowTitle();
     void updateImageSourceStatus(const QString &source);
     void updateCalibrationStatus();

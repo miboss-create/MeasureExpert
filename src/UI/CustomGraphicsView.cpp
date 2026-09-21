@@ -3,6 +3,7 @@
 #include "CustomImageItem.h"
 #include "RoiRectItem.h"
 
+#include <QButtonGroup>
 #include <QContextMenuEvent>
 #include <QGraphicsScene>
 #include <QHBoxLayout>
@@ -10,13 +11,61 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QResizeEvent>
+#include <QToolButton>
 #include <QWheelEvent>
 
 namespace {
 constexpr double kZoomMax = 50.0;
 constexpr double kZoomMin = 0.1;
 constexpr qreal kDefaultScenePad = 2000.0;
+
+QIcon makePointerIcon()
+{
+    QPixmap pm(20, 20);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    QPolygonF poly;
+    poly << QPointF(3, 2) << QPointF(3, 16) << QPointF(7.2, 12.2)
+         << QPointF(10.5, 17.5) << QPointF(13.2, 16.2) << QPointF(9.6, 11)
+         << QPointF(15, 11);
+    p.setPen(QPen(Qt::black, 1));
+    p.setBrush(Qt::white);
+    p.drawPolygon(poly);
+    return QIcon(pm);
 }
+
+QIcon makeHandIcon()
+{
+    QPixmap pm(20, 20);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(QPen(Qt::black, 1.2));
+    p.setBrush(QColor(245, 245, 245));
+    p.drawRoundedRect(QRectF(6, 8, 9, 8), 2, 2);
+    p.drawRoundedRect(QRectF(4, 6, 3.2, 7), 1.2, 1.2);
+    p.drawRoundedRect(QRectF(7.2, 3, 3.2, 8), 1.2, 1.2);
+    p.drawRoundedRect(QRectF(10.6, 4, 3.2, 7), 1.2, 1.2);
+    p.drawRoundedRect(QRectF(13.8, 6, 3.2, 6), 1.2, 1.2);
+    return QIcon(pm);
+}
+
+QIcon makeZoomIcon()
+{
+    QPixmap pm(20, 20);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(QPen(Qt::white, 1.6));
+    p.setBrush(Qt::NoBrush);
+    p.drawEllipse(QRectF(3, 3, 10, 10));
+    p.drawLine(QPointF(11.5, 11.5), QPointF(17, 17));
+    return QIcon(pm);
+}
+
+} // namespace
 
 CustomGraphicsView::CustomGraphicsView(QWidget *parent)
     : QGraphicsView(parent)
@@ -26,13 +75,20 @@ CustomGraphicsView::CustomGraphicsView(QWidget *parent)
     setRenderHint(QPainter::Antialiasing);
     setTransformationAnchor(QGraphicsView::AnchorViewCenter);
     setViewportUpdateMode(QGraphicsView::FullViewportUpdate);
-    setDragMode(QGraphicsView::ScrollHandDrag);
+    setDragMode(QGraphicsView::NoDrag);
     setContextMenuPolicy(Qt::DefaultContextMenu);
     setBackground();
     initWidget();
 }
 
-CustomGraphicsView::~CustomGraphicsView() = default;
+CustomGraphicsView::~CustomGraphicsView()
+{
+    m_loupeActive = false;
+    hideLoupe();
+    // m_loupe / m_scene 均为子对象，交由 Qt 父子树释放，避免与 viewport/scene 析构顺序冲突
+    m_loupe = nullptr;
+    m_scene = nullptr;
+}
 
 bool CustomGraphicsView::initWidget()
 {
@@ -44,27 +100,56 @@ bool CustomGraphicsView::initWidget()
     m_imageItem = new CustomImageItem();
     m_scene->addItem(m_imageItem);
 
-    m_posInfoLabel = new QLabel(this);
     m_posInfoWidget = new QWidget(this);
-    m_posInfoLabel->setStyleSheet(QStringLiteral(
-        "color:rgb(200,255,200); "
-        "background-color:rgba(50,50,50,160); "
-        "font: Microsoft YaHei;"
-        "font-size: 15px;"));
+    m_posInfoLabel = new QLabel(m_posInfoWidget);
+    m_posInfoWidget->setObjectName(QStringLiteral("posBar"));
+    m_posInfoWidget->setFixedHeight(28);
+    m_posInfoWidget->setStyleSheet(QStringLiteral(
+        "QWidget#posBar { background-color: rgba(30,30,30,200); }"
+        "QLabel { color: rgb(200,255,200); background: transparent;"
+        " font: Microsoft YaHei; font-size: 14px; }"
+        "QToolButton { background: transparent; border: 1px solid transparent; border-radius: 2px; }"
+        "QToolButton:checked { background: rgba(30,110,190,230); border: 1px solid #8ec8ff; }"
+        "QToolButton:hover { background: rgba(255,255,255,30); }"));
     m_posInfoLabel->setText(QStringLiteral(" W:0,H:0 | X:0,Y:0 | R:0,G:0,B:0"));
-    m_posInfoWidget->setFixedHeight(25);
-    m_posInfoWidget->setGeometry(0, height() - 25, width(), 25);
-    m_posInfoWidget->setStyleSheet(QStringLiteral("background-color:rgba(0,0,0,0);"));
 
-    auto *infoLayout = new QHBoxLayout();
-    infoLayout->setSpacing(0);
-    infoLayout->setContentsMargins(0, 0, 0, 0);
-    infoLayout->addWidget(m_posInfoLabel);
-    m_posInfoWidget->setLayout(infoLayout);
+    auto *infoLayout = new QHBoxLayout(m_posInfoWidget);
+    infoLayout->setSpacing(2);
+    infoLayout->setContentsMargins(6, 1, 4, 1);
+    infoLayout->addWidget(m_posInfoLabel, 1);
 
+    auto makeBtn = [this](const QIcon &icon, const QString &tip) {
+        auto *btn = new QToolButton(m_posInfoWidget);
+        btn->setCheckable(true);
+        btn->setIcon(icon);
+        btn->setIconSize(QSize(16, 16));
+        btn->setFixedSize(24, 22);
+        btn->setToolTip(tip);
+        btn->setAutoRaise(true);
+        return btn;
+    };
+    m_selectToolBtn = makeBtn(makePointerIcon(), tr("选择"));
+    m_zoomToolBtn = makeBtn(makeZoomIcon(), tr("放大镜：按住左键看局部放大，松开恢复"));
+    m_panToolBtn = makeBtn(makeHandIcon(), tr("平移"));
+    infoLayout->addWidget(m_selectToolBtn);
+    infoLayout->addWidget(m_panToolBtn);
+    infoLayout->addWidget(m_zoomToolBtn);
+
+    auto *group = new QButtonGroup(this);
+    group->setExclusive(true);
+    group->addButton(m_selectToolBtn, static_cast<int>(ViewTool::Select));
+    group->addButton(m_panToolBtn, static_cast<int>(ViewTool::Pan));
+    group->addButton(m_zoomToolBtn, static_cast<int>(ViewTool::Zoom));
+    m_selectToolBtn->setChecked(true);
+    connect(group, &QButtonGroup::idClicked, this, [this](int id) {
+        m_viewTool = static_cast<ViewTool>(id);
+        applyViewTool();
+    });
+    m_posInfoWidget->raise();
     connect(m_imageItem, &CustomImageItem::RGBValue, this, [this](const QString &info) {
         m_posInfoLabel->setText(info);
     });
+    applyViewTool();
     return true;
 }
 
@@ -136,6 +221,7 @@ void CustomGraphicsView::enterRoiDrawing()
     m_roiDrawing = true;
     m_drawingRoi = false;
     setDragMode(QGraphicsView::NoDrag);
+    unsetCursor();
 }
 
 void CustomGraphicsView::finishRoiDrawing()
@@ -149,7 +235,8 @@ void CustomGraphicsView::finishRoiDrawing()
     }
     if (m_roiDrawing) {
         m_roiDrawing = false;
-        setDragMode(QGraphicsView::ScrollHandDrag);
+        setDragMode(QGraphicsView::NoDrag);
+        applyViewTool();
         emit roiDrawConfirmed();
     }
 }
@@ -221,7 +308,7 @@ void CustomGraphicsView::setRoiEditEnabled(bool enabled)
         enterRoiDrawing();
     } else {
         m_roiDrawing = false;
-        setDragMode(m_savedDragMode);
+        applyViewTool();
         if (m_roiItem) {
             m_roiItem->setActive(false);
             m_roiItem->setSelected(false);
@@ -277,69 +364,77 @@ void CustomGraphicsView::wheelEvent(QWheelEvent *event)
     if (scrollAmount.y() < 0 && m_zoomValue <= kZoomMin) {
         return;
     }
+    setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
     scrollAmount.y() > 0 ? onZoom(1.1f) : onZoom(0.9f);
+    setTransformationAnchor(QGraphicsView::AnchorViewCenter);
+}
+
+void CustomGraphicsView::mousePressEvent(QMouseEvent *event)
+{
+    if (m_image.isNull()) {
+        QGraphicsView::mousePressEvent(event);
+        return;
+    }
+
+    const QPoint viewPos = event->position().toPoint();
+    const QPointF scenePos = mapToScene(viewPos);
+    const bool onRoi = m_roiEditEnabled && hitRoi(scenePos);
+
+    if (m_roiEditEnabled && event->button() == Qt::LeftButton && onRoi) {
+        setDragMode(QGraphicsView::NoDrag);
+        if (m_roiItem) {
+            m_roiItem->setSelected(true);
+        }
+        QGraphicsView::mousePressEvent(event);
+        return;
+    }
+
+    if (m_roiEditEnabled && m_roiDrawing && event->button() == Qt::LeftButton) {
+        m_drawingRoi = true;
+        m_drawStartScene = scenePos;
+        ensureRoiItem();
+        m_roiItem->setImageBounds(imageBounds());
+        m_roiItem->setActive(true);
+        m_roiItem->setVisible(true);
+        m_roiItem->setSelected(true);
+        m_roiItem->setRoiRect(QRectF(scenePos, QSizeF(1, 1)));
+        event->accept();
+        return;
+    }
+
+    if (!m_roiDrawing && m_viewTool == ViewTool::Zoom && event->button() == Qt::LeftButton) {
+        m_loupeActive = true;
+        viewport()->setCursor(Qt::BlankCursor);
+        updateLoupe(viewPos);
+        viewport()->grabMouse();
+        event->accept();
+        return;
+    }
+
+    if (m_roiItem && event->button() == Qt::LeftButton) {
+        m_roiItem->setSelected(false);
+    }
+    applyViewTool();
+    QGraphicsView::mousePressEvent(event);
 }
 
 void CustomGraphicsView::mouseDoubleClickEvent(QMouseEvent *event)
 {
-    if (event->button() == Qt::LeftButton && !m_image.isNull() && !m_roiEditEnabled) {
+    if (event->button() == Qt::LeftButton && !m_image.isNull() && !m_roiEditEnabled
+        && m_viewTool != ViewTool::Zoom) {
         fitFrame();
         onCenter();
     }
     QGraphicsView::mouseDoubleClickEvent(event);
 }
 
-void CustomGraphicsView::mousePressEvent(QMouseEvent *event)
-{
-    if (!m_roiEditEnabled || m_image.isNull()) {
-        QGraphicsView::mousePressEvent(event);
-        return;
-    }
-
-    const QPointF scenePos = mapToScene(event->pos());
-
-    if (event->button() == Qt::LeftButton) {
-        const bool onRoi = hitRoi(scenePos);
-        if (onRoi) {
-            // 交给 RoiRectItem 拖动/改大小；临时关掉手势拖图，避免抢事件
-            if (!m_roiDrawing) {
-                setDragMode(QGraphicsView::NoDrag);
-            }
-            if (m_roiItem) {
-                m_roiItem->setSelected(true);
-            }
-            QGraphicsView::mousePressEvent(event);
-            return;
-        }
-
-        // 绘制态：空白处左键拖出新 ROI
-        if (m_roiDrawing) {
-            m_drawingRoi = true;
-            m_drawStartScene = scenePos;
-            ensureRoiItem();
-            m_roiItem->setImageBounds(imageBounds());
-            m_roiItem->setActive(true);
-            m_roiItem->setVisible(true);
-            m_roiItem->setSelected(true);
-            m_roiItem->setRoiRect(QRectF(scenePos, QSizeF(1, 1)));
-            event->accept();
-            return;
-        }
-
-        // 已确认：空白处拖动画布
-        setDragMode(QGraphicsView::ScrollHandDrag);
-        if (m_roiItem) {
-            m_roiItem->setSelected(false);
-        }
-        QGraphicsView::mousePressEvent(event);
-        return;
-    }
-
-    QGraphicsView::mousePressEvent(event);
-}
-
 void CustomGraphicsView::mouseMoveEvent(QMouseEvent *event)
 {
+    if (m_loupeActive) {
+        updateLoupe(event->position().toPoint());
+        event->accept();
+        return;
+    }
     if (m_drawingRoi && m_roiItem) {
         const QPointF scenePos = mapToScene(event->pos());
         QRectF r;
@@ -362,6 +457,15 @@ void CustomGraphicsView::mouseMoveEvent(QMouseEvent *event)
 
 void CustomGraphicsView::mouseReleaseEvent(QMouseEvent *event)
 {
+    if (m_loupeActive && event->button() == Qt::LeftButton) {
+        m_loupeActive = false;
+        hideLoupe();
+        viewport()->releaseMouse();
+        applyViewTool();
+        event->accept();
+        return;
+    }
+
     if (m_drawingRoi && event->button() == Qt::LeftButton) {
         m_drawingRoi = false;
         if (m_roiItem && (m_roiItem->roiRect().width() < 4.0 || m_roiItem->roiRect().height() < 4.0)) {
@@ -371,9 +475,8 @@ void CustomGraphicsView::mouseReleaseEvent(QMouseEvent *event)
         return;
     }
 
-    // 调整态：松开后恢复可拖图（若仍在编辑且非绘制态）
-    if (m_roiEditEnabled && !m_roiDrawing && event->button() == Qt::LeftButton) {
-        setDragMode(QGraphicsView::ScrollHandDrag);
+    if (event->button() == Qt::LeftButton) {
+        applyViewTool();
     }
     QGraphicsView::mouseReleaseEvent(event);
 }
@@ -434,13 +537,106 @@ void CustomGraphicsView::paintEvent(QPaintEvent *event)
 void CustomGraphicsView::resizeEvent(QResizeEvent *event)
 {
     if (m_posInfoWidget) {
-        m_posInfoWidget->setGeometry(0, height() - 25, width(), 25);
+        constexpr int kBar = 28;
+        m_posInfoWidget->setGeometry(0, height() - kBar, width(), kBar);
+        m_posInfoWidget->raise();
     }
     if (!m_image.isNull()) {
         fitFrame();
         onCenter();
     }
     QGraphicsView::resizeEvent(event);
+}
+
+void CustomGraphicsView::applyViewTool()
+{
+    if (m_loupeActive) {
+        m_loupeActive = false;
+        hideLoupe();
+        viewport()->releaseMouse();
+    }
+    if (m_roiDrawing) {
+        setDragMode(QGraphicsView::NoDrag);
+        unsetCursor();
+        viewport()->unsetCursor();
+        return;
+    }
+    switch (m_viewTool) {
+    case ViewTool::Pan:
+        setDragMode(QGraphicsView::ScrollHandDrag);
+        unsetCursor();
+        viewport()->unsetCursor();
+        break;
+    case ViewTool::Zoom:
+        setDragMode(QGraphicsView::NoDrag);
+        setCursor(Qt::CrossCursor);
+        viewport()->setCursor(Qt::CrossCursor);
+        break;
+    case ViewTool::Select:
+    default:
+        setDragMode(QGraphicsView::NoDrag);
+        unsetCursor();
+        viewport()->unsetCursor();
+        break;
+    }
+}
+
+void CustomGraphicsView::updateLoupe(const QPoint &viewPos)
+{
+    if (m_image.isNull()) {
+        return;
+    }
+
+    constexpr int kLoupe = 220;
+    constexpr double kMag = 4.0;
+    // 在当前视图倍率基础上再放大 kMag 倍（不是相对原图像素固定倍率）
+    const double viewScale = qMax(1e-6, transform().m11());
+    const int srcSide = qMax(1, qRound(kLoupe / (kMag * viewScale)));
+    const QPointF scene = mapToScene(viewPos);
+    const int cx = qRound(scene.x());
+    const int cy = qRound(scene.y());
+    const QRect src(cx - srcSide / 2, cy - srcSide / 2, srcSide, srcSide);
+
+    QPixmap tile(srcSide, srcSide);
+    tile.fill(QColor(24, 24, 24));
+    {
+        QPainter tp(&tile);
+        const QRect imgRect(0, 0, m_image.width(), m_image.height());
+        const QRect visible = src.intersected(imgRect);
+        if (!visible.isEmpty()) {
+            tp.drawPixmap(visible.topLeft() - src.topLeft(), m_image, visible);
+        }
+    }
+
+    QPixmap scaled = tile.scaled(kLoupe, kLoupe, Qt::IgnoreAspectRatio, Qt::FastTransformation);
+    {
+        QPainter sp(&scaled);
+        sp.setRenderHint(QPainter::Antialiasing, true);
+        sp.setPen(QPen(QColor(255, 210, 40), 2));
+        sp.drawRect(1, 1, kLoupe - 3, kLoupe - 3);
+        // 中心红点：对准鼠标所在像素
+        sp.setPen(Qt::NoPen);
+        sp.setBrush(QColor(230, 30, 30));
+        sp.drawEllipse(QPointF(kLoupe / 2.0, kLoupe / 2.0), 1.5, 1.5);
+    }
+
+    if (!m_loupe) {
+        m_loupe = new QLabel(viewport());
+        m_loupe->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    }
+    m_loupe->setPixmap(scaled);
+    m_loupe->resize(scaled.size());
+    // 放大镜以鼠标为中心，随移动跟手
+    m_loupe->move(viewPos - QPoint(kLoupe / 2, kLoupe / 2));
+    m_loupe->show();
+    m_loupe->raise();
+}
+
+void CustomGraphicsView::hideLoupe()
+{
+    if (m_loupe) {
+        m_loupe->hide();
+    }
 }
 
 void CustomGraphicsView::onCenter()

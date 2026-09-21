@@ -44,29 +44,15 @@ void RunEngine::runOnce(const QImage &image,
     ctx.image = image;
     ctx.calibration = calibration;
     ctx.projectDir = projectDir;
-    cycle.alignment = ToolRegistry::runAlignment(ctx, recipe.alignment);
-    cycle.alignmentOk = cycle.alignment.ok;
-    if (!cycle.alignment.ok) {
-        cycle.reason = cycle.alignment.message;
-        cycle.totalOk = false;
-        for (const MeasureItem &item : recipe.measures) {
-            MeasureResult r;
-            r.id = item.id;
-            r.name = item.name;
-            r.type = item.type;
-            r.nominal = item.nominal;
-            r.upper = item.upper;
-            r.lower = item.lower;
-            r.unit = item.unit;
-            r.decimals = item.decimals;
-            r.measured = false;
-            r.ok = false;
-            r.message = QStringLiteral("定位失败");
-            cycle.measures.push_back(r);
-        }
-        cycle.elapsedMs = static_cast<int>(timer.elapsed());
-        emit cycleFinished(cycle);
-        return;
+
+    const bool followPose = !recipe.alignment.modelFile.isEmpty();
+    if (followPose) {
+        cycle.alignment = ToolRegistry::runAlignment(ctx, recipe.alignment);
+        cycle.alignmentOk = cycle.alignment.ok;
+    } else {
+        cycle.alignment = {};
+        cycle.alignment.message = QStringLiteral("未启用定位跟随");
+        cycle.alignmentOk = false;
     }
 
     cycle.measures = MeasureService::runAll(image, recipe, cycle.alignment, calibration);

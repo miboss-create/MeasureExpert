@@ -98,20 +98,33 @@ inline QVector<Point2D> tupleToPoints(const HalconCpp::HTuple &rows, const Halco
 
 inline bool resolveImageCaliper(const MeasureItem &item,
                                 const AlignmentResult &alignment,
+                                bool followPose,
                                 double *rowImg,
                                 double *colImg,
                                 double *phiImg)
 {
-    if (!alignment.ok || !rowImg || !colImg || !phiImg) {
+    if (!rowImg || !colImg || !phiImg) {
         return false;
     }
-    affinePoint(alignment.homMat2D,
-                item.geometry.row,
-                item.geometry.column,
-                rowImg,
-                colImg);
-    *phiImg = alignment.angleRad + item.geometry.phi;
-    return true;
+
+    if (followPose) {
+        if (!alignment.ok) {
+            return false;
+        }
+        affinePoint(alignment.homMat2D,
+                    item.geometry.row,
+                    item.geometry.column,
+                    rowImg,
+                    colImg);
+        *phiImg = alignment.angleRad + item.geometry.phi;
+    } else {
+        // 无定位跟随：几何直接按图像坐标使用
+        *rowImg = item.geometry.row;
+        *colImg = item.geometry.column;
+        *phiImg = item.geometry.phi;
+    }
+
+    return qIsFinite(*rowImg) && qIsFinite(*colImg) && qIsFinite(*phiImg);
 }
 
 } // namespace ToolCommon

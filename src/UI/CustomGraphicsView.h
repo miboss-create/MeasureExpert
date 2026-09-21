@@ -11,6 +11,7 @@
 #include "UI/RoiRectItem.h"
 
 class QLabel;
+class QToolButton;
 class CustomImageItem;
 
 // 视觉窗口核心：缩放 / 拖拽 / 双击复位 / ROI 编辑
@@ -73,6 +74,15 @@ private:
     void finishRoiDrawing();
     void enterRoiDrawing();
     void deleteRoiFromMenu();
+    void applyViewTool();
+    void updateLoupe(const QPoint &viewPos);
+    void hideLoupe();
+
+    enum class ViewTool {
+        Select,
+        Pan,
+        Zoom
+    };
 
     double m_zoomValue = 1.0;
     QGraphicsScene *m_scene = nullptr;
@@ -80,6 +90,12 @@ private:
     RoiRectItem *m_roiItem = nullptr;
     QWidget *m_posInfoWidget = nullptr;
     QLabel *m_posInfoLabel = nullptr;
+    QToolButton *m_selectToolBtn = nullptr;
+    QToolButton *m_panToolBtn = nullptr;
+    QToolButton *m_zoomToolBtn = nullptr;
+    QLabel *m_loupe = nullptr;
+    ViewTool m_viewTool = ViewTool::Select;
+    bool m_loupeActive = false;
     QPixmap m_image;
     QImage m_qImage;
     QPixmap m_tilePixmap = QPixmap(36, 36);

@@ -24,5 +24,7 @@ int main(int argc, char *argv[])
     qInfo().noquote() << QObject::tr("MeasureExpert 已启动（主图：Qt ImageView）");
     qInfo().noquote() << QObject::tr("日志目录: %1").arg(LogSink::instance()->logDirPath());
 
-    return app.exec();
+    const int code = app.exec();
+    LogSink::instance()->uninstallMessageHandler();
+    return code;
 }

@@ -8,28 +8,78 @@ using namespace Me::ToolCommon;
 namespace Me {
 namespace {
 
-class MeasureHandleGuard
+// 沿卡尺长边布多条测量线，每条只取最强边缘。单条 measure_pos 对一条边往往只有 1 个点。
+QVector<Point2D> sampleEdgesAlong(const HalconCpp::HImage &gray,
+                                  Hlong width,
+                                  Hlong height,
+                                  double rowC,
+                                  double colC,
+                                  double phi,
+                                  double halfSearch,
+                                  double halfAlong,
+                                  double threshold)
 {
-public:
-    ~MeasureHandleGuard()
-    {
+    QVector<Point2D> pts;
+    if (halfSearch < 1.0 || halfAlong < 1.0) {
+        return pts;
+    }
+
+    const int samples = qBound(5, static_cast<int>((halfAlong * 2.0) / 6.0), 31);
+    const double step = (2.0 * halfAlong) / static_cast<double>(samples - 1);
+    const double subL2 = qBound(1.0, step * 0.45, 6.0);
+    const double s = qSin(phi);
+    const double c = qCos(phi);
+
+    for (int i = 0; i < samples; ++i) {
+        const double t = -halfAlong + i * step;
+        const double row = rowC + t * c;
+        const double col = colC - t * s;
+        HTuple handle;
         try {
-            if (handle.Length() > 0) {
-                CloseMeasure(handle);
+            GenMeasureRectangle2(row, col, phi, halfSearch, subL2,
+                                 width, height, "bilinear", &handle);
+            HTuple rowEdge, colEdge, amplitude, distance;
+            MeasurePos(gray, handle, 1.0, threshold, "all", "all",
+                       &rowEdge, &colEdge, &amplitude, &distance);
+            CloseMeasure(handle);
+            handle = HTuple();
+
+            int best = -1;
+            double bestAmp = 0.0;
+            const int n = static_cast<int>(qMin(rowEdge.Length(), amplitude.Length()));
+            for (int k = 0; k < n; ++k) {
+                const double amp = qAbs(amplitude[k].D());
+                if (amp >= bestAmp) {
+                    bestAmp = amp;
+                    best = k;
+                }
+            }
+            if (best < 0 || best >= colEdge.Length()) {
+                continue;
+            }
+            Point2D p;
+            p.row = rowEdge[best].D();
+            p.col = colEdge[best].D();
+            if (qIsFinite(p.row) && qIsFinite(p.col)) {
+                pts.push_back(p);
+            }
+        } catch (HException &) {
+            try {
+                if (handle.Length() > 0) {
+                    CloseMeasure(handle);
+                }
+            } catch (...) {
             }
         } catch (...) {
         }
     }
-    HTuple handle;
-};
+    return pts;
+}
 
 } // namespace
 
 MeasureResult FindLineTool::run(const MeasureItem &item, const ToolContext &ctx) const
 {
-    if (!ctx.alignment.ok) {
-        return failResult(item, QStringLiteral("定位失败，跳过找线"));
-    }
     if (!qIsFinite(item.geometry.length1) || !qIsFinite(item.geometry.length2)
         || item.geometry.length1 < 1.0 || item.geometry.length2 < 1.0) {
         return failResult(item, QStringLiteral("找线卡尺尺寸无效"));
@@ -48,37 +98,22 @@ MeasureResult FindLineTool::run(const MeasureItem &item, const ToolContext &ctx)
         double rowImg = 0.0;
         double colImg = 0.0;
         double phiImg = 0.0;
-        if (!resolveImageCaliper(item, ctx.alignment, &rowImg, &colImg, &phiImg)) {
-            return failResult(item, QStringLiteral("卡尺坐标变换失败"));
+        if (!resolveImageCaliper(item, ctx.alignment, ctx.followPose, &rowImg, &colImg, &phiImg)) {
+            return failResult(item,
+                              ctx.followPose ? QStringLiteral("定位失败，无法跟随找线 ROI")
+                                             : QStringLiteral("找线卡尺坐标无效"));
         }
         if (!qIsFinite(rowImg) || !qIsFinite(colImg) || !qIsFinite(phiImg)) {
             return failResult(item, QStringLiteral("卡尺坐标非有限值"));
         }
 
-        MeasureHandleGuard guard;
-        GenMeasureRectangle2(rowImg,
-                             colImg,
-                             phiImg,
-                             item.geometry.length1,
-                             item.geometry.length2,
-                             width,
-                             height,
-                             "bilinear",
-                             &guard.handle);
-
-        HTuple rowEdge, colEdge, amplitude, distance;
-        MeasurePos(gray,
-                   guard.handle,
-                   1.5,
-                   20,
-                   "all",
-                   "all",
-                   &rowEdge,
-                   &colEdge,
-                   &amplitude,
-                   &distance);
-        CloseMeasure(guard.handle);
-        guard.handle = HTuple();
+        // 矩形宽、高都可能才是“横跨边缘”的方向，两种都采样，取得点更多的一侧
+        const QVector<Point2D> alongPhi = sampleEdgesAlong(
+            gray, width, height, rowImg, colImg, phiImg,
+            item.geometry.length1, item.geometry.length2, 10.0);
+        const QVector<Point2D> acrossPhi = sampleEdgesAlong(
+            gray, width, height, rowImg, colImg, phiImg + 1.5707963267948966,
+            item.geometry.length2, item.geometry.length1, 10.0);
 
         MeasureResult result = baseResult(item);
         result.imageRow = rowImg;
@@ -86,12 +121,13 @@ MeasureResult FindLineTool::run(const MeasureItem &item, const ToolContext &ctx)
         result.imagePhi = phiImg;
         result.length1 = item.geometry.length1;
         result.length2 = item.geometry.length2;
-        result.firstEdges = tupleToPoints(rowEdge, colEdge);
+        result.firstEdges = alongPhi.size() >= acrossPhi.size() ? alongPhi : acrossPhi;
 
         if (result.firstEdges.size() < 2) {
             result.measured = false;
             result.ok = false;
-            result.message = QStringLiteral("边缘点不足，无法拟合直线");
+            result.message = QStringLiteral("边缘点不足（%1），无法拟合直线")
+                                 .arg(result.firstEdges.size());
             return result;
         }
 

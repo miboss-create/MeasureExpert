@@ -10,10 +10,6 @@ namespace {
 
 MeasureResult runCaliperPairs(const MeasureItem &item, const ToolContext &ctx, bool asDiameter)
 {
-    if (!ctx.alignment.ok) {
-        return failResult(item, QStringLiteral("定位失败，跳过测量"));
-    }
-
     try {
         HImage gray = toGrayHImage(ctx.image);
         if (!gray.IsInitialized()) {
@@ -27,8 +23,10 @@ MeasureResult runCaliperPairs(const MeasureItem &item, const ToolContext &ctx, b
         double rowImg = 0.0;
         double colImg = 0.0;
         double phiImg = 0.0;
-        if (!resolveImageCaliper(item, ctx.alignment, &rowImg, &colImg, &phiImg)) {
-            return failResult(item, QStringLiteral("卡尺坐标变换失败"));
+        if (!resolveImageCaliper(item, ctx.alignment, ctx.followPose, &rowImg, &colImg, &phiImg)) {
+            return failResult(item,
+                              ctx.followPose ? QStringLiteral("定位失败，无法跟随卡尺 ROI")
+                                             : QStringLiteral("卡尺坐标无效"));
         }
 
         HTuple measureHandle;

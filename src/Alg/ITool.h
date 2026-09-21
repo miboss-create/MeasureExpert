@@ -16,6 +16,8 @@ struct ToolContext {
     AlignmentResult alignment;
     CalibrationConfig calibration;
     QString projectDir;
+    /// true：ROI 存相对模板，运行时需定位成功再仿射；false：ROI 即图像坐标，无需定位
+    bool followPose = false;
     /// 已按配方顺序跑完的前序测量结果（key = MeasureItem.id）
     QHash<QString, MeasureResult> priors;
 };

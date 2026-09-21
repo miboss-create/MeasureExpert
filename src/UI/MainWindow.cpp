@@ -44,7 +44,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QToolBar>
-#include <QVBoxLayout>
+#include <QThread>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QtMath>
@@ -104,10 +104,7 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
-    if (m_runThread) {
-        m_runThread->quit();
-        m_runThread->wait(3000);
-    }
+    shutdownRunEngine();
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -242,13 +239,16 @@ QRectF MainWindow::measureGeometryToImageRect(const Me::CaliperGeometry &geo,
                                              const Me::AlignmentResult &align,
                                              Me::MeasureType type) const
 {
-    const double cA = qCos(align.angleRad);
-    const double sA = qSin(align.angleRad);
-    const double rowImg = cA * geo.row - sA * geo.column + align.row;
-    const double colImg = sA * geo.row + cA * geo.column + align.column;
+    double rowImg = geo.row;
+    double colImg = geo.column;
+    if (align.ok) {
+        const double cA = qCos(align.angleRad);
+        const double sA = qSin(align.angleRad);
+        rowImg = cA * geo.row - sA * geo.column + align.row;
+        colImg = sA * geo.row + cA * geo.column + align.column;
+    }
 
     if (type == MeasureType::FindCircle) {
-        // 正圆外接方框：半径 = length1，环宽 = length2 → 外径 length1+length2
         const double outer = qMax(4.0, geo.length1 + qMax(0.0, geo.length2));
         const double side = qMax(8.0, outer * 2.0);
         return QRectF(colImg - side * 0.5, rowImg - side * 0.5, side, side);
@@ -263,24 +263,55 @@ bool MainWindow::imageRectToMeasureGeometry(const QRectF &imageRect,
                                            const Me::AlignmentResult &align,
                                            Me::CaliperGeometry *out) const
 {
-    if (!out || !align.ok || !imageRect.isValid()) {
+    if (!out || !imageRect.isValid()) {
         return false;
     }
     const QRectF r = imageRect.normalized();
     const double rowImg = r.center().y();
     const double colImg = r.center().x();
-    const double cA = qCos(align.angleRad);
-    const double sA = qSin(align.angleRad);
-    const double dRow = rowImg - align.row;
-    const double dCol = colImg - align.column;
 
-    // 画出来的是图像轴对齐框 → 相对模板原点；phi 使运行时卡尺仍轴对齐于当前图
-    out->row = cA * dRow + sA * dCol;
-    out->column = -sA * dRow + cA * dCol;
-    out->phi = -align.angleRad;
+    if (align.ok) {
+        const double cA = qCos(align.angleRad);
+        const double sA = qSin(align.angleRad);
+        const double dRow = rowImg - align.row;
+        const double dCol = colImg - align.column;
+        // 相对模板坐标，运行时再仿射跟随
+        out->row = cA * dRow + sA * dCol;
+        out->column = -sA * dRow + cA * dCol;
+        out->phi = -align.angleRad;
+    } else {
+        // 图像坐标：无定位时直接使用
+        out->row = rowImg;
+        out->column = colImg;
+        out->phi = 0.0;
+    }
     out->length1 = qMax(2.0, r.width() * 0.5);
     out->length2 = qMax(2.0, r.height() * 0.5);
     return true;
+}
+
+void MainWindow::shutdownRunEngine()
+{
+    if (!m_runEngine && !m_runThread) {
+        return;
+    }
+
+    RunEngine *engine = m_runEngine;
+    QThread *thread = m_runThread;
+    m_runEngine = nullptr;
+
+    if (engine) {
+        disconnect(engine, nullptr, this, nullptr);
+        disconnect(this, nullptr, engine, nullptr);
+        if (thread && thread->isRunning()) {
+            // 在工作线程里排队删除，禁止主线程直接 delete
+            QMetaObject::invokeMethod(engine, &RunEngine::shutdown, Qt::BlockingQueuedConnection);
+        }
+    }
+    if (thread && thread->isRunning()) {
+        thread->quit();
+        thread->wait(3000);
+    }
 }
 
 void MainWindow::setupRunEngine()
@@ -289,7 +320,6 @@ void MainWindow::setupRunEngine()
     m_runEngine = new RunEngine();
     m_runEngine->moveToThread(m_runThread);
 
-    connect(m_runThread, &QThread::finished, m_runEngine, &QObject::deleteLater);
     connect(m_runEngine, &RunEngine::cycleFinished, this, &MainWindow::onCycleFinished);
     connect(m_runEngine, &RunEngine::errorOccurred, this, &MainWindow::onRunError);
 
@@ -996,10 +1026,6 @@ void MainWindow::onDrawMeasureRoi()
     if (!recipe) {
         return;
     }
-    if (recipe->alignment.modelFile.isEmpty()) {
-        QMessageBox::information(this, tr("提示"), tr("请先创建定位模板，再画卡尺 ROI。"));
-        return;
-    }
     const int idx = recipe->indexOfMeasure(measureId);
     if (idx < 0) {
         return;
@@ -1009,6 +1035,7 @@ void MainWindow::onDrawMeasureRoi()
     const Me::AlignmentConfig alignCfg = recipe->alignment;
     const Me::MeasureItem measureCopy = recipe->measures.at(idx);
     const QRectF roiRect = m_imageView->roiImageRect();
+    const bool followPose = !alignCfg.modelFile.isEmpty();
 
     const auto t = measureCopy.type;
     if (t == MeasureType::PointToLine || t == MeasureType::LineIntersection
@@ -1018,15 +1045,21 @@ void MainWindow::onDrawMeasureRoi()
         return;
     }
 
-    // 第一次：进入编辑；第二次：确认写入相对模板几何
+    // 第一次：进入编辑；第二次：确认写入几何（有定位则相对模板，否则图像坐标）
     if (m_roiEditMode != RoiEditMode::MeasureCaliper) {
-        const Me::AlignmentResult align =
-            Me::AlignmentService::find(m_currentImage, alignCfg, projectDir(), false);
+        Me::AlignmentResult align;
+        if (followPose) {
+            align = Me::AlignmentService::find(m_currentImage, alignCfg, projectDir(), false);
+        }
         QRectF seed;
-        if (align.ok) {
+        if (followPose && align.ok) {
             seed = measureGeometryToImageRect(measureCopy.geometry, align, measureCopy.type);
-            qInfo().noquote() << tr("已按当前定位位姿投影卡尺框 (score=%1)")
+            qInfo().noquote() << tr("已按当前定位位姿投影卡尺 (score=%1)")
                                      .arg(align.score, 0, 'f', 3);
+        } else if (!followPose
+                   && (measureCopy.geometry.length1 > 1.0 || measureCopy.geometry.length2 > 1.0)) {
+            seed = measureGeometryToImageRect(measureCopy.geometry, {}, measureCopy.type);
+            qInfo().noquote() << tr("已载入图像坐标 ROI（未启用定位跟随）");
         } else {
             const int w = m_currentImage.width();
             const int h = m_currentImage.height();
@@ -1036,10 +1069,11 @@ void MainWindow::onDrawMeasureRoi()
             } else {
                 seed = QRectF(w * 0.35, h * 0.45, w * 0.3, h * 0.08);
             }
-            qWarning().noquote() << tr("当前图定位失败，先给默认卡尺框；确认时需定位成功。%1")
-                                        .arg(align.message);
+            if (followPose && !align.ok) {
+                qWarning().noquote() << tr("定位失败，使用默认 ROI；确认时将写入图像坐标。%1")
+                                            .arg(align.message);
+            }
         }
-        // 先设形状再设矩形，保证找圆显示为正圆
         m_imageView->setRoiShape(measureCopy.type == MeasureType::FindCircle
                                      ? RoiRectItem::Shape::Circle
                                      : RoiRectItem::Shape::Rectangle);
@@ -1057,12 +1091,21 @@ void MainWindow::onDrawMeasureRoi()
     }
 
     qInfo().noquote() << tr("确认卡尺 ROI...");
-    const Me::AlignmentResult align =
-        Me::AlignmentService::find(m_currentImage, alignCfg, projectDir(), false);
-    if (!align.ok) {
-        QMessageBox::warning(this, tr("无法换算"),
-                             tr("确认卡尺前需要当前图像定位成功。\n%1").arg(align.message));
-        return;
+    Me::AlignmentResult align;
+    if (followPose) {
+        align = Me::AlignmentService::find(m_currentImage, alignCfg, projectDir(), false);
+        if (!align.ok) {
+            const auto choice = QMessageBox::question(
+                this,
+                tr("定位失败"),
+                tr("当前图定位失败，是否仍按图像坐标保存 ROI（本次不跟随）？\n%1")
+                    .arg(align.message),
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::Yes);
+            if (choice != QMessageBox::Yes) {
+                return;
+            }
+        }
     }
 
     Me::CaliperGeometry geo;
@@ -1263,12 +1306,6 @@ bool MainWindow::prepareRun(QString *failReason) const
     if (!recipe) {
         if (failReason) {
             *failReason = tr("无可用配方。");
-        }
-        return false;
-    }
-    if (recipe->alignment.modelFile.isEmpty()) {
-        if (failReason) {
-            *failReason = tr("请先创建定位模板。");
         }
         return false;
     }

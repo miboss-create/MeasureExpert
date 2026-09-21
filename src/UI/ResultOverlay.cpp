@@ -214,7 +214,7 @@ QImage ResultOverlay::render(const QImage &source, const CycleResult &result)
     p.setRenderHint(QPainter::Antialiasing, true);
     p.setFont(QFont(QStringLiteral("Microsoft YaHei"), 11, QFont::Bold));
 
-    if (result.alignmentOk) {
+    if (result.alignment.ok) {
         drawContours(p, result.alignment.modelContours, QColor(0, 255, 100), 2.0);
 
         const QPointF origin(result.alignment.column, result.alignment.row);
