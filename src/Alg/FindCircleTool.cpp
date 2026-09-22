@@ -2,26 +2,81 @@
 
 #include "Alg/ToolCommon.h"
 
+#include <QtMath>
+
 using namespace HalconCpp;
 using namespace Me::ToolCommon;
 
 namespace Me {
 namespace {
 
-class MeasureHandleGuard
+// 沿圆周布径向卡尺。gen_measure_arc 的剖面贴着圆周走，圆边与剖面平行时往往只有 0～1 个点。
+QVector<Point2D> sampleRadialEdges(const HImage &gray,
+                                   Hlong width,
+                                   Hlong height,
+                                   double rowC,
+                                   double colC,
+                                   double radius,
+                                   double phiStart,
+                                   double angleExtent,
+                                   double radialHalf,
+                                   double threshold)
 {
-public:
-    ~MeasureHandleGuard()
-    {
+    QVector<Point2D> pts;
+    if (radius < 2.0 || radialHalf < 1.0 || angleExtent < 0.2) {
+        return pts;
+    }
+
+    const double arcLen = qMax(1.0, radius * angleExtent);
+    const int samples = qBound(12, static_cast<int>(arcLen / 8.0), 72);
+    const double step = angleExtent / static_cast<double>(samples);
+    const double tangentialHalf = qBound(1.0, radius * step * 0.35, 8.0);
+
+    for (int i = 0; i < samples; ++i) {
+        const double ang = phiStart + (static_cast<double>(i) + 0.5) * step;
+        const double row = rowC + radius * qSin(ang);
+        const double col = colC + radius * qCos(ang);
+        HTuple handle;
         try {
-            if (handle.Length() > 0) {
-                CloseMeasure(handle);
+            GenMeasureRectangle2(row, col, ang, radialHalf, tangentialHalf,
+                                 width, height, "bilinear", &handle);
+            HTuple rowEdge, colEdge, amplitude, distance;
+            MeasurePos(gray, handle, 1.0, threshold, "all", "all",
+                       &rowEdge, &colEdge, &amplitude, &distance);
+            CloseMeasure(handle);
+            handle = HTuple();
+
+            int best = -1;
+            double bestAmp = 0.0;
+            const int n = static_cast<int>(qMin(rowEdge.Length(), amplitude.Length()));
+            for (int k = 0; k < n; ++k) {
+                const double amp = qAbs(amplitude[k].D());
+                if (amp >= bestAmp) {
+                    bestAmp = amp;
+                    best = k;
+                }
+            }
+            if (best < 0 || best >= colEdge.Length()) {
+                continue;
+            }
+            Point2D p;
+            p.row = rowEdge[best].D();
+            p.col = colEdge[best].D();
+            if (qIsFinite(p.row) && qIsFinite(p.col)) {
+                pts.push_back(p);
+            }
+        } catch (HException &) {
+            try {
+                if (handle.Length() > 0) {
+                    CloseMeasure(handle);
+                }
+            } catch (...) {
             }
         } catch (...) {
         }
     }
-    HTuple handle;
-};
+    return pts;
+}
 
 } // namespace
 
@@ -63,31 +118,17 @@ MeasureResult FindCircleTool::run(const MeasureItem &item, const ToolContext &ct
             return failResult(item, QStringLiteral("圆心坐标非有限值"));
         }
 
-        MeasureHandleGuard guard;
-        GenMeasureArc(rowImg,
-                      colImg,
-                      radius,
-                      phiImg,
-                      angleExtent,
-                      annulus,
-                      width,
-                      height,
-                      "bilinear",
-                      &guard.handle);
-
-        HTuple rowEdge, colEdge, amplitude, distance;
-        MeasurePos(gray,
-                   guard.handle,
-                   1.5,
-                   20,
-                   "all",
-                   "all",
-                   &rowEdge,
-                   &colEdge,
-                   &amplitude,
-                   &distance);
-        CloseMeasure(guard.handle);
-        guard.handle = HTuple();
+        // 先在环带内找边；点不够时把径向搜索加宽到大半个圆，避免 ROI 略大时采空
+        QVector<Point2D> edges = sampleRadialEdges(
+            gray, width, height, rowImg, colImg, radius, phiImg, angleExtent, annulus, 10.0);
+        if (edges.size() < 3) {
+            const double wide = qMax(annulus, radius * 0.85);
+            const QVector<Point2D> wideEdges = sampleRadialEdges(
+                gray, width, height, rowImg, colImg, radius, phiImg, angleExtent, wide, 8.0);
+            if (wideEdges.size() > edges.size()) {
+                edges = wideEdges;
+            }
+        }
 
         MeasureResult result = baseResult(item);
         result.imageRow = rowImg;
@@ -96,12 +137,13 @@ MeasureResult FindCircleTool::run(const MeasureItem &item, const ToolContext &ct
         result.length1 = radius;
         result.length2 = annulus;
         result.angleExtent = angleExtent;
-        result.firstEdges = tupleToPoints(rowEdge, colEdge);
+        result.firstEdges = edges;
 
         if (result.firstEdges.size() < 3) {
             result.measured = false;
             result.ok = false;
-            result.message = QStringLiteral("边缘点不足，无法拟合圆");
+            result.message = QStringLiteral("边缘点不足（%1），无法拟合圆")
+                                 .arg(result.firstEdges.size());
             return result;
         }
 

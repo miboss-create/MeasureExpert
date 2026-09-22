@@ -30,7 +30,7 @@ void drawTextOutlined(QPainter &p, const QPointF &baselinePos, const QString &te
     p.drawText(baselinePos, text);
 }
 
-/// 按左上角锚点绘制（避免基线导致顶部裁切 / 行重叠）
+/// 按左上角锚点绘制（避免基线导致顶部裁切）
 void drawTextOutlinedTopLeft(QPainter &p, const QPointF &topLeft, const QString &text, const QColor &fill)
 {
     if (text.isEmpty()) {
@@ -39,18 +39,6 @@ void drawTextOutlinedTopLeft(QPainter &p, const QPointF &topLeft, const QString 
     const QFontMetrics fm(p.font());
     const QPointF baseline(topLeft.x(), topLeft.y() + fm.ascent());
     drawTextOutlined(p, baseline, text, fill);
-}
-
-void drawTextBlock(QPainter &p, const QPointF &topLeft, const QStringList &lines, const QColor &fill)
-{
-    if (lines.isEmpty()) {
-        return;
-    }
-    const QFontMetrics fm(p.font());
-    const int step = fm.lineSpacing();
-    for (int i = 0; i < lines.size(); ++i) {
-        drawTextOutlinedTopLeft(p, topLeft + QPointF(0, i * step), lines.at(i), fill);
-    }
 }
 
 void drawContours(QPainter &p, const QVector<Contour2D> &contours, const QColor &color, qreal width)
@@ -81,70 +69,6 @@ void drawContours(QPainter &p, const QVector<Contour2D> &contours, const QColor 
 bool isCaliperType(MeasureType t)
 {
     return t == MeasureType::CaliperWidth || t == MeasureType::CaliperDiameter;
-}
-
-QString typeShortName(MeasureType t)
-{
-    switch (t) {
-    case MeasureType::CaliperWidth:
-        return QStringLiteral("卡尺宽度");
-    case MeasureType::CaliperDiameter:
-        return QStringLiteral("卡尺直径");
-    case MeasureType::FindLine:
-        return QStringLiteral("找线");
-    case MeasureType::FindCircle:
-        return QStringLiteral("找圆");
-    case MeasureType::PointToLine:
-        return QStringLiteral("点线距");
-    case MeasureType::LineIntersection:
-        return QStringLiteral("交点");
-    case MeasureType::Angle:
-        return QStringLiteral("夹角");
-    case MeasureType::PointDistance:
-        return QStringLiteral("点距");
-    }
-    return measureTypeToString(t);
-}
-
-QStringList formatMeasureLines(const MeasureResult &m)
-{
-    QStringList lines;
-    lines << QStringLiteral("%1 [%2]").arg(m.name, typeShortName(m.type));
-
-    if (!m.measured) {
-        lines << (m.message.isEmpty() ? QStringLiteral("--") : m.message);
-        lines << QStringLiteral("NG");
-        return lines;
-    }
-
-    const bool geomOnly = (m.type == MeasureType::FindLine
-                           || m.type == MeasureType::LineIntersection);
-
-    if (geomOnly) {
-        if (m.type == MeasureType::FindLine) {
-            lines << QStringLiteral("段长=%1%2  点数=%3")
-                         .arg(m.value, 0, 'f', m.decimals)
-                         .arg(m.unit)
-                         .arg(m.firstEdges.size());
-        } else if (m.hasPoint) {
-            lines << QStringLiteral("点=(%1, %2)")
-                         .arg(m.point.col, 0, 'f', 1)
-                         .arg(m.point.row, 0, 'f', 1);
-        }
-        lines << (m.ok ? QStringLiteral("OK") : QStringLiteral("NG"));
-    } else {
-        lines << QStringLiteral("%1%2").arg(m.value, 0, 'f', m.decimals).arg(m.unit);
-        lines << QStringLiteral("%1  名义%2 [%3, %4]")
-                     .arg(m.ok ? QStringLiteral("OK") : QStringLiteral("NG"))
-                     .arg(m.nominal, 0, 'f', m.decimals)
-                     .arg(m.nominal + m.lower, 0, 'f', m.decimals)
-                     .arg(m.nominal + m.upper, 0, 'f', m.decimals);
-    }
-
-    if (!m.message.isEmpty() && !m.ok) {
-        lines << m.message;
-    }
-    return lines;
 }
 
 void drawFittedLine(QPainter &p, const LineGeom &line, double preferHalfLen, const QColor &color)
@@ -223,10 +147,6 @@ QImage ResultOverlay::render(const QImage &source, const CycleResult &result)
         p.drawEllipse(origin, 5, 5);
         const double a = result.alignment.angleRad;
         p.drawLine(origin, origin + QPointF(50 * qCos(a), 50 * qSin(a)));
-        drawTextOutlinedTopLeft(p,
-                         origin + QPointF(8, -18),
-                         QStringLiteral("score=%1").arg(result.alignment.score, 0, 'f', 3),
-                         QColor(0, 220, 255));
     }
 
     for (const auto &m : result.measures) {
@@ -311,41 +231,15 @@ QImage ResultOverlay::render(const QImage &source, const CycleResult &result)
             p.drawLine(p1, p2);
             drawCross(p, p1, 8);
             drawCross(p, p2, 8);
-
-            const QPointF mid = (p1 + p2) * 0.5;
-            drawTextBlock(p, mid + QPointF(8, -8), formatMeasureLines(m), okColor);
-        } else {
-            QPointF labelPos(m.imageCol + 8, m.imageRow - 10);
-            if (m.circle.valid) {
-                labelPos = QPointF(m.circle.col + 10, m.circle.row - 10);
-            } else if (m.line.valid) {
-                labelPos = QPointF(0.5 * (m.line.colBegin + m.line.colEnd) + 8,
-                                   0.5 * (m.line.rowBegin + m.line.rowEnd) - 12);
-            } else if (m.hasPoint) {
-                labelPos = toQt(m.point) + QPointF(10, -10);
-            }
-            drawTextBlock(p, labelPos, formatMeasureLines(m), okColor);
         }
     }
 
     {
-        // OK/NG 与 reason 分行，按字高留足边距，避免顶部裁切与叠字
+        // 图上只留总判定 OK/NG，详细数值看右侧结果面板
         const QString stamp = result.totalOk ? QStringLiteral("OK") : QStringLiteral("NG");
         const QColor stampColor = result.totalOk ? QColor(40, 200, 80) : QColor(230, 50, 50);
-        constexpr int kMargin = 12;
-
         p.setFont(QFont(QStringLiteral("Microsoft YaHei"), 28, QFont::Bold));
-        const QFontMetrics stampFm(p.font());
-        drawTextOutlinedTopLeft(p, QPointF(kMargin, kMargin), stamp, stampColor);
-
-        if (!result.reason.isEmpty()) {
-            p.setFont(QFont(QStringLiteral("Microsoft YaHei"), 12, QFont::Bold));
-            const int reasonTop = kMargin + stampFm.height() + 8;
-            drawTextOutlinedTopLeft(p,
-                                    QPointF(kMargin, reasonTop),
-                                    result.reason,
-                                    QColor(240, 240, 240));
-        }
+        drawTextOutlinedTopLeft(p, QPointF(12, 12), stamp, stampColor);
     }
 
     p.end();
