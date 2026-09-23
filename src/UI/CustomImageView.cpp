@@ -89,6 +89,31 @@ void CustomImageView::setRoiImageRect(const QRectF &rect)
     m_graphicsView->setRoiImageRect(rect);
 }
 
+void CustomImageView::setRoiOriented(const QPointF &center, qreal phiRad, qreal length1, qreal length2)
+{
+    m_graphicsView->setRoiOriented(center, phiRad, length1, length2);
+}
+
+QPointF CustomImageView::roiCenter() const
+{
+    return m_graphicsView->roiCenter();
+}
+
+qreal CustomImageView::roiPhi() const
+{
+    return m_graphicsView->roiPhi();
+}
+
+qreal CustomImageView::roiLength1() const
+{
+    return m_graphicsView->roiLength1();
+}
+
+qreal CustomImageView::roiLength2() const
+{
+    return m_graphicsView->roiLength2();
+}
+
 void CustomImageView::clearRoi()
 {
     m_graphicsView->clearRoi();

@@ -14,11 +14,29 @@ QPointF toQt(const Point2D &p)
     return QPointF(p.col, p.row);
 }
 
-/** 以 pt 为中心绘制十字标记（边缘点/圆心常用） */
-void drawCross(QPainter &p, const QPointF &pt, double arm)
+/** 以 pt 为中心绘制十字；angleRad 为第一臂相对水平的转角（弧度） */
+void drawCross(QPainter &p, const QPointF &pt, double arm, double angleRad = 0.0)
 {
-    p.drawLine(QPointF(pt.x() - arm, pt.y()), QPointF(pt.x() + arm, pt.y()));
-    p.drawLine(QPointF(pt.x(), pt.y() - arm), QPointF(pt.x(), pt.y() + arm));
+    const double c = qCos(angleRad);
+    const double s = qSin(angleRad);
+    const QPointF d1(arm * c, arm * s);
+    const QPointF d2(-arm * s, arm * c); // 垂直臂
+    p.drawLine(pt - d1, pt + d1);
+    p.drawLine(pt - d2, pt + d2);
+}
+
+/** 拟合线方向角（图像坐标，x=col / y=row） */
+double lineAngleRad(const LineGeom &line)
+{
+    if (!line.valid) {
+        return 0.0;
+    }
+    const double dx = line.colEnd - line.colBegin;
+    const double dy = line.rowEnd - line.rowBegin;
+    if (qAbs(dx) < 1e-12 && qAbs(dy) < 1e-12) {
+        return 0.0;
+    }
+    return qAtan2(dy, dx);
 }
 
 /** 黑描边 + 彩色填充，提高复杂背景上的可读性 */
@@ -74,7 +92,7 @@ bool isCaliperType(MeasureType t)
     return t == MeasureType::CaliperWidth || t == MeasureType::CaliperDiameter;
 }
 
-/** 绘制拟合线段：中点延伸 preferHalfLen，端点圆点标记 */
+/** 绘制拟合线段：中点延伸 preferHalfLen，端点小圆标记 */
 void drawFittedLine(QPainter &p, const LineGeom &line, double preferHalfLen, const QColor &color)
 {
     if (!line.valid
@@ -87,12 +105,13 @@ void drawFittedLine(QPainter &p, const LineGeom &line, double preferHalfLen, con
     QPointF b(line.colEnd, line.rowEnd);
     QPointF d = b - a;
     const double len = qSqrt(d.x() * d.x() + d.y() * d.y());
-    QPen linePen(color, 3);
+    QPen linePen(color, 1.5);
     linePen.setCosmetic(true);
     p.setPen(linePen);
 
     if (len < 1e-3) {
-        p.drawEllipse(a, 4, 4);
+        p.setBrush(color);
+        p.drawEllipse(a, 1.5, 1.5);
         return;
     }
 
@@ -102,8 +121,8 @@ void drawFittedLine(QPainter &p, const LineGeom &line, double preferHalfLen, con
     p.drawLine(mid - dir * half, mid + dir * half);
 
     p.setBrush(color);
-    p.drawEllipse(a, 3, 3);
-    p.drawEllipse(b, 3, 3);
+    p.drawEllipse(a, 1.5, 1.5);
+    p.drawEllipse(b, 1.5, 1.5);
 }
 
 } // namespace
@@ -205,37 +224,44 @@ QImage ResultOverlay::render(const QImage &source, const CycleResult &result)
             p.drawEllipse(QPointF(m.imageCol, m.imageRow), qMax(1.0, r - ann), qMax(1.0, r - ann));
         }
 
-        // 边缘点：加大十字，便于辨认
-        p.setPen(QPen(QColor(255, 80, 80), 2));
-        for (const Point2D &e : m.firstEdges) {
-            drawCross(p, toQt(e), 6);
-        }
-        p.setPen(QPen(QColor(80, 160, 255), 2));
-        for (const Point2D &e : m.secondEdges) {
-            drawCross(p, toQt(e), 6);
-        }
-
+        // 先画拟合线，再画边缘点十字（十字相对直线转 45°，避免被线挡住）
         if (m.line.valid) {
             const double half = m.length1 > 0 ? m.length1 : 40.0;
             drawFittedLine(p, m.line, half, okColor);
         }
 
+        const double crossAngle = m.line.valid
+            ? (lineAngleRad(m.line) + M_PI_4)
+            : M_PI_4;
+        QPen edgePen(QColor(255, 80, 80), 1.0);
+        edgePen.setCosmetic(true);
+        p.setPen(edgePen);
+        for (const Point2D &e : m.firstEdges) {
+            drawCross(p, toQt(e), 2.5, crossAngle);
+        }
+        edgePen.setColor(QColor(80, 160, 255));
+        p.setPen(edgePen);
+        for (const Point2D &e : m.secondEdges) {
+            drawCross(p, toQt(e), 2.5, crossAngle);
+        }
+
         if (m.circle.valid && qIsFinite(m.circle.row) && qIsFinite(m.circle.col)
             && qIsFinite(m.circle.radius) && m.circle.radius > 0.0) {
             const double rr = qMin(m.circle.radius, 1.0e6);
-            QPen circlePen(okColor, 3);
+            QPen circlePen(okColor, 1.5);
             circlePen.setCosmetic(true);
             p.setPen(circlePen);
             p.setBrush(Qt::NoBrush);
             p.drawEllipse(QPointF(m.circle.col, m.circle.row), rr, rr);
-            drawCross(p, QPointF(m.circle.col, m.circle.row), 8);
+            p.setPen(QPen(okColor, 1.0));
+            drawCross(p, QPointF(m.circle.col, m.circle.row), 3.0, M_PI_4);
         }
 
         if (m.hasPoint && qIsFinite(m.point.row) && qIsFinite(m.point.col)) {
-            p.setPen(QPen(okColor, 2));
+            p.setPen(QPen(okColor, 1.0));
             p.setBrush(QColor(okColor.red(), okColor.green(), okColor.blue(), 160));
-            p.drawEllipse(toQt(m.point), 5, 5);
-            drawCross(p, toQt(m.point), 8);
+            p.drawEllipse(toQt(m.point), 2.0, 2.0);
+            drawCross(p, toQt(m.point), 3.0, M_PI_4);
         }
 
         if (m.usedPairIndex >= 0
@@ -243,10 +269,11 @@ QImage ResultOverlay::render(const QImage &source, const CycleResult &result)
             && m.usedPairIndex < m.secondEdges.size()) {
             const QPointF p1 = toQt(m.firstEdges.at(m.usedPairIndex));
             const QPointF p2 = toQt(m.secondEdges.at(m.usedPairIndex));
-            p.setPen(QPen(okColor, 3));
+            p.setPen(QPen(okColor, 1.5));
             p.drawLine(p1, p2);
-            drawCross(p, p1, 8);
-            drawCross(p, p2, 8);
+            p.setPen(QPen(okColor, 1.0));
+            drawCross(p, p1, 3.0, crossAngle);
+            drawCross(p, p2, 3.0, crossAngle);
         }
     }
 

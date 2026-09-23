@@ -215,13 +215,13 @@ void MainWindow::enterRoiEditMode(bool forMeasure)
             qInfo().noquote() << tr("已进入找圆 ROI 编辑：请在主图上调整黄色圆");
         } else {
             statusBar()->showMessage(
-                tr("卡尺 ROI：左键拖拽绘制，右键确认后可拖图并调整黄框；选中右键可删除。调好后点「确认卡尺ROI」。Esc 取消。"),
+                tr("卡尺 ROI：左键拖拽绘制，右键确认后可拖图；拖橙色圆点旋转，角点缩放。调好后点「确认卡尺ROI」。Esc 取消。"),
                 0);
             qInfo().noquote() << tr("已进入卡尺 ROI 编辑：请在主图上调整黄色矩形");
         }
     } else {
         statusBar()->showMessage(
-            tr("模板 ROI：左键拖拽绘制，右键确认后可拖图并调整绿框；选中右键可删除。调好后点「确认训练模板」。Esc 取消。"),
+            tr("模板 ROI：左键拖拽绘制，右键确认后可拖图；拖橙色圆点旋转。调好后点「确认训练模板」。Esc 取消。"),
             0);
         qInfo().noquote() << tr("已进入定位 ROI 编辑：请在主图上调整绿色矩形");
     }
@@ -254,40 +254,56 @@ void MainWindow::onCancelRoiEdit()
 
 // ---- 测量几何：模板坐标 ↔ 图像坐标 ----
 
-QRectF MainWindow::measureGeometryToImageRect(const Me::CaliperGeometry &geo,
-                                             const Me::AlignmentResult &align,
-                                             Me::MeasureType type) const
+bool MainWindow::measureGeometryToImageRoi(const Me::CaliperGeometry &geo,
+                                           const Me::AlignmentResult &align,
+                                           Me::MeasureType type,
+                                           QPointF *centerOut,
+                                           qreal *phiOut,
+                                           qreal *len1Out,
+                                           qreal *len2Out) const
 {
+    if (!centerOut || !phiOut || !len1Out || !len2Out) {
+        return false;
+    }
+
     double rowImg = geo.row;
     double colImg = geo.column;
+    double phiImg = geo.phi;
     if (align.ok) {
         const double cA = qCos(align.angleRad);
         const double sA = qSin(align.angleRad);
         rowImg = cA * geo.row - sA * geo.column + align.row;
         colImg = sA * geo.row + cA * geo.column + align.column;
+        phiImg = align.angleRad + geo.phi;
     }
+
+    *centerOut = QPointF(colImg, rowImg);
+    *phiOut = phiImg;
 
     if (type == MeasureType::FindCircle) {
         const double outer = qMax(4.0, geo.length1 + qMax(0.0, geo.length2));
-        const double side = qMax(8.0, outer * 2.0);
-        return QRectF(colImg - side * 0.5, rowImg - side * 0.5, side, side);
+        *len1Out = outer;
+        *len2Out = outer;
+        *phiOut = 0.0;
+    } else {
+        *len1Out = qMax(2.0, geo.length1);
+        *len2Out = qMax(2.0, geo.length2);
     }
-
-    const double w = qMax(8.0, geo.length1 * 2.0);
-    const double h = qMax(8.0, geo.length2 * 2.0);
-    return QRectF(colImg - w * 0.5, rowImg - h * 0.5, w, h);
+    return qIsFinite(rowImg) && qIsFinite(colImg) && qIsFinite(phiImg);
 }
 
-bool MainWindow::imageRectToMeasureGeometry(const QRectF &imageRect,
+bool MainWindow::imageRoiToMeasureGeometry(const QPointF &centerImg,
+                                           qreal phiImg,
+                                           qreal length1,
+                                           qreal length2,
                                            const Me::AlignmentResult &align,
                                            Me::CaliperGeometry *out) const
 {
-    if (!out || !imageRect.isValid()) {
+    if (!out || length1 < 2.0 || length2 < 2.0) {
         return false;
     }
-    const QRectF r = imageRect.normalized();
-    const double rowImg = r.center().y();
-    const double colImg = r.center().x();
+    const double rowImg = centerImg.y();
+    const double colImg = centerImg.x();
 
     if (align.ok) {
         const double cA = qCos(align.angleRad);
@@ -297,15 +313,14 @@ bool MainWindow::imageRectToMeasureGeometry(const QRectF &imageRect,
         // 相对模板坐标，运行时再仿射跟随
         out->row = cA * dRow + sA * dCol;
         out->column = -sA * dRow + cA * dCol;
-        out->phi = -align.angleRad;
+        out->phi = phiImg - align.angleRad;
     } else {
-        // 图像坐标：无定位时直接使用
         out->row = rowImg;
         out->column = colImg;
-        out->phi = 0.0;
+        out->phi = phiImg;
     }
-    out->length1 = qMax(2.0, r.width() * 0.5);
-    out->length2 = qMax(2.0, r.height() * 0.5);
+    out->length1 = qMax(2.0, length1);
+    out->length2 = qMax(2.0, length2);
     return true;
 }
 
@@ -401,7 +416,7 @@ bool MainWindow::initWidget()
     m_imageView->setMinimumSize(400, 300);
     connect(m_imageView, &CustomImageView::roiDrawConfirmed, this, [this]() {
         statusBar()->showMessage(
-            tr("ROI 已确认：可拖动画布；点击 ROI 可移动/改大小；选中后右键可删除。"),
+            tr("ROI 已确认：可拖动画布；拖角点缩放，拖橙色圆点旋转；选中后右键可删除。"),
             0);
         qInfo().noquote() << tr("ROI 绘制已确认（右键），可拖图并继续调整 ROI");
     });
@@ -1072,7 +1087,6 @@ void MainWindow::onDrawMeasureRoi()
     // 拷贝，避免后续 structureChanged 导致悬空引用
     const Me::AlignmentConfig alignCfg = recipe->alignment;
     const Me::MeasureItem measureCopy = recipe->measures.at(idx);
-    const QRectF roiRect = m_imageView->roiImageRect();
     const bool followPose = !alignCfg.modelFile.isEmpty();
 
     const auto t = measureCopy.type;
@@ -1091,23 +1105,35 @@ void MainWindow::onDrawMeasureRoi()
             // followPose：用当前图定位位姿，把相对模板几何反投影到图像
             align = Me::AlignmentService::find(m_currentImage, alignCfg, projectDir(), false);
         }
-        QRectF seed;
+        QPointF seedCenter;
+        qreal seedPhi = 0.0;
+        qreal seedL1 = 0.0;
+        qreal seedL2 = 0.0;
+        bool haveSeed = false;
         if (followPose && align.ok) {
-            seed = measureGeometryToImageRect(measureCopy.geometry, align, measureCopy.type);
+            haveSeed = measureGeometryToImageRoi(measureCopy.geometry, align, measureCopy.type,
+                                                 &seedCenter, &seedPhi, &seedL1, &seedL2);
             qInfo().noquote() << tr("已按当前定位位姿投影卡尺 (score=%1)")
                                      .arg(align.score, 0, 'f', 3);
         } else if (!followPose
                    && (measureCopy.geometry.length1 > 1.0 || measureCopy.geometry.length2 > 1.0)) {
-            seed = measureGeometryToImageRect(measureCopy.geometry, {}, measureCopy.type);
+            haveSeed = measureGeometryToImageRoi(measureCopy.geometry, {}, measureCopy.type,
+                                                 &seedCenter, &seedPhi, &seedL1, &seedL2);
             qInfo().noquote() << tr("已载入图像坐标 ROI（未启用定位跟随）");
-        } else {
+        }
+        if (!haveSeed) {
             const int w = m_currentImage.width();
             const int h = m_currentImage.height();
             if (measureCopy.type == MeasureType::FindCircle) {
                 const double side = qMin(w, h) * 0.3;
-                seed = QRectF((w - side) * 0.5, (h - side) * 0.5, side, side);
+                seedCenter = QPointF(w * 0.5, h * 0.5);
+                seedPhi = 0.0;
+                seedL1 = seedL2 = side * 0.5;
             } else {
-                seed = QRectF(w * 0.35, h * 0.45, w * 0.3, h * 0.08);
+                seedCenter = QPointF(w * 0.5, h * 0.5);
+                seedPhi = 0.0;
+                seedL1 = w * 0.15;
+                seedL2 = h * 0.04;
             }
             if (followPose && !align.ok) {
                 qWarning().noquote() << tr("定位失败，使用默认 ROI；确认时将写入图像坐标。%1")
@@ -1117,7 +1143,7 @@ void MainWindow::onDrawMeasureRoi()
         m_imageView->setRoiShape(measureCopy.type == MeasureType::FindCircle
                                      ? RoiRectItem::Shape::Circle
                                      : RoiRectItem::Shape::Rectangle);
-        m_imageView->setRoiImageRect(seed);
+        m_imageView->setRoiOriented(seedCenter, seedPhi, seedL1, seedL2);
         enterRoiEditMode(true);
         return;
     }
@@ -1130,7 +1156,7 @@ void MainWindow::onDrawMeasureRoi()
         return;
     }
 
-    // --- ROI 确认：再次定位，将图像矩形逆变换为相对模板 CaliperGeometry ---
+    // --- ROI 确认：再次定位，将图像定向 ROI 逆变换为相对模板 CaliperGeometry ---
     qInfo().noquote() << tr("确认卡尺 ROI...");
     Me::AlignmentResult align;
     if (followPose) {
@@ -1149,15 +1175,19 @@ void MainWindow::onDrawMeasureRoi()
         }
     }
 
+    const QPointF centerImg = m_imageView->roiCenter();
+    const qreal phiImg = m_imageView->roiPhi();
+    const qreal len1Img = m_imageView->roiLength1();
+    const qreal len2Img = m_imageView->roiLength2();
+
     Me::CaliperGeometry geo;
-    if (!imageRectToMeasureGeometry(roiRect, align, &geo)) {
+    if (!imageRoiToMeasureGeometry(centerImg, phiImg, len1Img, len2Img, align, &geo)) {
         QMessageBox::warning(this, tr("无法换算"), tr("卡尺 ROI 无效。"));
         return;
     }
     // 找圆：正圆外径 → 半径 length1 + 环宽 length2
     if (measureCopy.type == MeasureType::FindCircle) {
-        const QRectF r = roiRect.normalized();
-        const double outerR = qMax(4.0, qMin(r.width(), r.height()) * 0.5);
+        const double outerR = qMax(4.0, qMin(len1Img, len2Img));
         double ann = measureCopy.geometry.length2;
         if (!(ann > 0.0) || ann >= outerR) {
             ann = qMax(2.0, outerR * 0.15);
@@ -1167,6 +1197,7 @@ void MainWindow::onDrawMeasureRoi()
         }
         geo.length1 = qMax(2.0, outerR - ann);
         geo.length2 = ann;
+        geo.phi = 0.0;
         geo.angleExtent = measureCopy.geometry.angleExtent > 0
             ? measureCopy.geometry.angleExtent
             : 6.283185307179586;
@@ -1202,16 +1233,16 @@ void MainWindow::onDrawMeasureRoi()
     mr.type = item.type;
     mr.ok = true;
     mr.measured = false;
-    mr.imageRow = roiRect.center().y();
-    mr.imageCol = roiRect.center().x();
-    mr.imagePhi = 0.0; // 确认框为图像轴对齐
+    mr.imageRow = centerImg.y();
+    mr.imageCol = centerImg.x();
+    mr.imagePhi = phiImg;
     mr.length1 = geo.length1;
     mr.length2 = geo.length2;
     mr.angleExtent = geo.angleExtent;
     mr.message = tr("测量ROI已更新");
     preview.measures.push_back(mr);
     preview.totalOk = true;
-    preview.reason = tr("测量ROI已写入相对模板坐标");
+    preview.reason = tr("测量ROI已写入");
     m_imageView->setImage(Me::ResultOverlay::render(m_currentImage, preview));
 
     qInfo().noquote() << tr("测量 ROI 已更新: %1  row=%2 col=%3 phi=%4 L1=%5 L2=%6")

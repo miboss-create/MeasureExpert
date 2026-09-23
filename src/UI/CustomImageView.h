@@ -34,9 +34,14 @@ public:
     void setRoiStyle(const QColor &color, const QString &label);
     void setRoiShape(RoiRectItem::Shape shape);
     RoiRectItem::Shape roiShape() const;
-    /** ROI 外接矩形，图像像素坐标 (x=col, y=row) */
+    /** ROI 外接 AABB，图像像素坐标 (x=col, y=row) */
     QRectF roiImageRect() const;
     void setRoiImageRect(const QRectF &rect);
+    void setRoiOriented(const QPointF &center, qreal phiRad, qreal length1, qreal length2);
+    QPointF roiCenter() const;
+    qreal roiPhi() const;
+    qreal roiLength1() const;
+    qreal roiLength2() const;
     void clearRoi();
     bool hasRoi() const;
 

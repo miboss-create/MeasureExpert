@@ -242,7 +242,7 @@ void CustomGraphicsView::finishRoiDrawing()
         return;
     }
     m_drawingRoi = false;
-    if (m_roiItem && (m_roiItem->roiRect().width() < 4.0 || m_roiItem->roiRect().height() < 4.0)) {
+    if (m_roiItem && (m_roiItem->length1() < 2.0 || m_roiItem->length2() < 2.0)) {
         m_roiItem->setRoiRect(defaultRoiRect());
     }
     if (m_roiDrawing) {
@@ -353,6 +353,38 @@ void CustomGraphicsView::setRoiImageRect(const QRectF &rect)
     }
 }
 
+void CustomGraphicsView::setRoiOriented(const QPointF &center, qreal phiRad, qreal length1, qreal length2)
+{
+    ensureRoiItem();
+    m_roiItem->setImageBounds(imageBounds());
+    m_roiItem->setOrientedRoi(center, phiRad, length1, length2);
+    m_roiItem->setActive(m_roiEditEnabled);
+    if (m_roiEditEnabled && hasRoi()) {
+        m_roiItem->setVisible(true);
+        m_roiItem->setSelected(true);
+    }
+}
+
+QPointF CustomGraphicsView::roiCenter() const
+{
+    return m_roiItem ? m_roiItem->center() : QPointF();
+}
+
+qreal CustomGraphicsView::roiPhi() const
+{
+    return m_roiItem ? m_roiItem->phi() : 0.0;
+}
+
+qreal CustomGraphicsView::roiLength1() const
+{
+    return m_roiItem ? m_roiItem->length1() : 0.0;
+}
+
+qreal CustomGraphicsView::roiLength2() const
+{
+    return m_roiItem ? m_roiItem->length2() : 0.0;
+}
+
 void CustomGraphicsView::clearRoi()
 {
     if (m_roiItem) {
@@ -364,8 +396,7 @@ void CustomGraphicsView::clearRoi()
 
 bool CustomGraphicsView::hasRoi() const
 {
-    return m_roiItem && m_roiItem->roiRect().isValid() && m_roiItem->roiRect().width() >= 4.0
-           && m_roiItem->roiRect().height() >= 4.0;
+    return m_roiItem && m_roiItem->length1() >= 2.0 && m_roiItem->length2() >= 2.0;
 }
 
 // ---------------------------------------------------------------------------
@@ -490,7 +521,7 @@ void CustomGraphicsView::mouseReleaseEvent(QMouseEvent *event)
 
     if (m_drawingRoi && event->button() == Qt::LeftButton) {
         m_drawingRoi = false;
-        if (m_roiItem && (m_roiItem->roiRect().width() < 4.0 || m_roiItem->roiRect().height() < 4.0)) {
+        if (m_roiItem && (m_roiItem->length1() < 2.0 || m_roiItem->length2() < 2.0)) {
             m_roiItem->setRoiRect(defaultRoiRect());
         }
         event->accept();
@@ -689,6 +720,9 @@ void CustomGraphicsView::onZoom(float scaleFactor)
     }
     m_zoomValue *= scaleFactor;
     scale(scaleFactor, scaleFactor);
+    if (m_roiItem) {
+        m_roiItem->refreshHandleMetrics();
+    }
 }
 
 void CustomGraphicsView::fitFrame()

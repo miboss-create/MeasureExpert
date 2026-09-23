@@ -145,14 +145,21 @@ private:
     void enterRoiEditMode(bool forMeasure);
     void leaveRoiEditMode(bool clearRoi);
     void updateRoiActionTexts();
-    /** 相对模板几何 + 定位位姿 → 主图像素矩形（预览/种子 ROI） */
-    QRectF measureGeometryToImageRect(const Me::CaliperGeometry &geo,
-                                      const Me::AlignmentResult &align,
-                                      Me::MeasureType type = Me::MeasureType::CaliperWidth) const;
-    /** 主图像素矩形 → 相对模板（或图像）坐标；确认卡尺 ROI 时调用 */
-    bool imageRectToMeasureGeometry(const QRectF &imageRect,
-                                    const Me::AlignmentResult &align,
-                                    Me::CaliperGeometry *out) const;
+    /** 相对模板几何 + 定位位姿 → 图像坐标定向 ROI（中心/phi/半长） */
+    bool measureGeometryToImageRoi(const Me::CaliperGeometry &geo,
+                                   const Me::AlignmentResult &align,
+                                   Me::MeasureType type,
+                                   QPointF *centerOut,
+                                   qreal *phiOut,
+                                   qreal *len1Out,
+                                   qreal *len2Out) const;
+    /** 图像定向 ROI → 相对模板（或图像）CaliperGeometry；确认卡尺 ROI 时调用 */
+    bool imageRoiToMeasureGeometry(const QPointF &centerImg,
+                                   qreal phiImg,
+                                   qreal length1,
+                                   qreal length2,
+                                   const Me::AlignmentResult &align,
+                                   Me::CaliperGeometry *out) const;
 
     Me::ProjectService *m_projectService = nullptr;
     Me::RunEngine *m_runEngine = nullptr;

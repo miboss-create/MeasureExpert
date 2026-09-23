@@ -4,18 +4,19 @@
 #include <QColor>
 #include <QGraphicsObject>
 #include <QPainterPath>
+#include <QPointF>
 #include <QRectF>
 #include <QString>
 
 /**
- * 可交互 ROI 图元（场景坐标 = 图像像素坐标）
+ * 可交互 ROI 图元（场景坐标 = 图像像素坐标，x=col / y=row）
  *
  * 形状：
- *   - Rectangle：轴对齐矩形，8 向手柄缩放 + 整体平移
- *   - Circle：正圆（外接正方形约束），手柄在圆周/对角 45° 位置
+ *   - Rectangle：类 HALCON rectangle2（中心 + phi + length1/2），
+ *     8 向缩放手柄 + 外侧旋转手柄 + 整体平移
+ *   - Circle：正圆（外接正方形约束），手柄在圆周上；无旋转
  *
- * 约束：ROI 始终 clamp 在 setImageBounds 内，最小边长 4px。
- * 交互由 CustomGraphicsView 协调绘制态/确认态；本类负责命中、拖拽与 roiChanged 信号。
+ * 约束：ROI 尽量 clamp 在 setImageBounds 内，最小半边长 2px。
  */
 class RoiRectItem : public QGraphicsObject
 {
@@ -28,24 +29,34 @@ public:
 
     explicit RoiRectItem(QGraphicsItem *parent = nullptr);
 
-    /** 归一化后的外接矩形（Circle 模式下为正方形） */
+    /** 外接轴对齐矩形（旋转后的 AABB；Circle 为正方形） */
     QRectF roiRect() const;
+
+    /** 轴对齐设置：圆心/矩形中心取 rect 中心，phi 置 0，半长 = 宽高/2 */
     void setRoiRect(const QRectF &rect);
+
+    /** 定向矩形（图像坐标）：center=(col,row)，phi 弧度，len1/len2 半边长 */
+    void setOrientedRoi(const QPointF &center, qreal phiRad, qreal length1, qreal length2);
+    QPointF center() const { return m_center; }
+    qreal phi() const { return m_phi; }
+    qreal length1() const { return m_len1; }
+    qreal length2() const { return m_len2; }
 
     void setShape(Shape shape);
     Shape shapeMode() const { return m_shape; }
 
-    /** 图像有效区域，用于 clamp ROI */
     void setImageBounds(const QRectF &bounds);
     void setActive(bool active);
     void setStyle(const QColor &color, const QString &label);
+    /** 视图缩放变化后刷新手柄尺寸（屏幕像素恒定） */
+    void refreshHandleMetrics();
 
     QRectF boundingRect() const override;
     QPainterPath shape() const override;
     void paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget) override;
 
 signals:
-    void roiChanged(const QRectF &rect);
+    void roiChanged(const QRectF &aabb);
 
 protected:
     void mousePressEvent(QGraphicsSceneMouseEvent *event) override;
@@ -55,7 +66,6 @@ protected:
     void hoverLeaveEvent(QGraphicsSceneHoverEvent *event) override;
 
 private:
-    /** 拖拽手柄类型：MoveBody=整体平移，其余为 8 向缩放 */
     enum Handle {
         None = -1,
         MoveBody = 0,
@@ -66,26 +76,48 @@ private:
         BottomRight,
         Bottom,
         BottomLeft,
-        Left
+        Left,
+        Rotate
     };
 
+    QPointF localToScene(qreal lx, qreal ly) const;
+    QPointF sceneToLocal(const QPointF &scenePos) const;
+    QRectF axisAlignedBounds() const;
     Handle hitTest(const QPointF &pos) const;
     QRectF handleRect(Handle h) const;
+    QPointF handleCenter(Handle h) const;
+    /** 当前视图缩放（场景→屏幕），用于手柄屏幕像素恒定大小 */
+    qreal viewScale() const;
+    /** 手柄在场景坐标中的边长（约恒定屏幕像素） */
+    qreal handleSceneSize(Handle h) const;
+    /** 旋转杆伸出长度（场景坐标） */
+    qreal rotateStickScene() const;
     void updateCursor(Handle h);
-    QRectF clampToBounds(QRectF rect) const;
-    /** Circle 模式：强制外接正方形 */
-    QRectF enforceShape(QRectF rect) const;
-    void normalizeRect();
+    void applyGeometry(const QPointF &center, qreal phi, qreal len1, qreal len2);
+    void clampInPlace();
+    void emitChanged();
 
     Shape m_shape = Shape::Rectangle;
-    QRectF m_rect;
+    QPointF m_center;
+    qreal m_phi = 0.0;
+    qreal m_len1 = 0.0;
+    qreal m_len2 = 0.0;
     QRectF m_imageBounds;
+
     Handle m_activeHandle = None;
     Handle m_hoverHandle = None;
-    QPointF m_pressScenePos;  ///< 按下时的场景坐标
-    QRectF m_pressRect;       ///< 按下时的 ROI 快照，用于 delta 计算
+    QPointF m_pressScenePos;
+    QPointF m_pressCenter;
+    qreal m_pressPhi = 0.0;
+    qreal m_pressLen1 = 0.0;
+    qreal m_pressLen2 = 0.0;
+    qreal m_pressLocalX = 0.0; ///< 按下时鼠标局部坐标，用于对边固定缩放
+    qreal m_pressLocalY = 0.0;
+
     bool m_active = true;
-    qreal m_handleSize = 8.0;
+    qreal m_handleScreenPx = 5.0;   ///< 缩放角点目标屏幕边长
+    qreal m_rotateScreenPx = 6.0;   ///< 旋转圆点目标屏幕直径
+    qreal m_rotateStickPx = 14.0;   ///< 旋转杆目标屏幕伸出长度
     QColor m_color = QColor(0, 220, 120);
     QString m_label = QStringLiteral("ROI");
 };

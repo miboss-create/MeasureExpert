@@ -53,11 +53,17 @@ public:
     void setRoiShape(RoiRectItem::Shape shape);
     RoiRectItem::Shape roiShape() const;
 
-    /** 当前 ROI 外接矩形，图像像素坐标 (x=col, y=row, width, height) */
+    /** 当前 ROI 外接 AABB，图像像素坐标 (x=col, y=row, width, height) */
     QRectF roiImageRect() const;
     void setRoiImageRect(const QRectF &rect);
+    /** 定向矩形（rectangle2）：中心/phi/半长；圆模式忽略 phi */
+    void setRoiOriented(const QPointF &center, qreal phiRad, qreal length1, qreal length2);
+    QPointF roiCenter() const;
+    qreal roiPhi() const;
+    qreal roiLength1() const;
+    qreal roiLength2() const;
     void clearRoi();
-    /** 宽高均 ≥ 4px 视为有效 ROI */
+    /** 半边长均 ≥ 2px 视为有效 ROI */
     bool hasRoi() const;
 
 signals:
