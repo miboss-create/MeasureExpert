@@ -8,6 +8,19 @@ using namespace Me::ToolCommon;
 namespace Me {
 namespace {
 
+/**
+ * 卡尺宽度/直径共用实现。
+ *
+ * 流程：
+ *   1. resolveImageCaliper → 当前图上的卡尺中心/朝向
+ *   2. GenMeasureRectangle2 + MeasurePairs → 两组边缘及对内距离
+ *   3. 选一对距离作为测量值：
+ *        - 有名义值：选最接近名义（已标定则先把名义换成像素）的一对
+ *        - 直径模式且无名义：多对距离取平均
+ *        - 否则：用第一对
+ *
+ * @param asDiameter  true=直径策略；false=宽度策略
+ */
 MeasureResult runCaliperPairs(const MeasureItem &item, const ToolContext &ctx, bool asDiameter)
 {
     try {
@@ -29,6 +42,7 @@ MeasureResult runCaliperPairs(const MeasureItem &item, const ToolContext &ctx, b
                                              : QStringLiteral("卡尺坐标无效"));
         }
 
+        // length1：沿 phi 半长（搜索方向）；length2：垂直半宽
         HTuple measureHandle;
         GenMeasureRectangle2(rowImg,
                              colImg,
@@ -44,10 +58,11 @@ MeasureResult runCaliperPairs(const MeasureItem &item, const ToolContext &ctx, b
         HTuple rowEdgeSecond, colEdgeSecond, ampSecond;
         HTuple intraDistance, interDistance;
 
+        // MeasurePairs：在同一剖面上找成对边缘；intraDistance[i] = 第 i 对的间距（像素）
         MeasurePairs(gray,
                      measureHandle,
-                     1.5,
-                     20,
+                     1.5,   // Sigma
+                     20,    // Threshold
                      "all",
                      "all",
                      &rowEdgeFirst,
@@ -79,6 +94,7 @@ MeasureResult runCaliperPairs(const MeasureItem &item, const ToolContext &ctx, b
         int used = 0;
         double valuePx = intraDistance[0].D();
         if (intraDistance.Length() > 1 && item.nominal != 0.0) {
+            // 多对边时按名义值挑最接近的一对，减少量到错边
             double bestDiff = 1e300;
             const double nominalPx = (ctx.calibration.calibrated && ctx.calibration.pixelSizeMm > 0.0)
                 ? (item.nominal / ctx.calibration.pixelSizeMm)
@@ -93,6 +109,7 @@ MeasureResult runCaliperPairs(const MeasureItem &item, const ToolContext &ctx, b
                 }
             }
         } else if (asDiameter && intraDistance.Length() > 1) {
+            // 直径：无名义时对所有对距平均
             double sum = 0.0;
             for (int i = 0; i < intraDistance.Length(); ++i) {
                 sum += intraDistance[i].D();
@@ -100,7 +117,7 @@ MeasureResult runCaliperPairs(const MeasureItem &item, const ToolContext &ctx, b
             valuePx = sum / static_cast<double>(intraDistance.Length());
             used = 0;
         }
-        result.usedPairIndex = used;
+        result.usedPairIndex = used; // 叠图高亮该对边缘
 
         QString unit;
         result.value = applyCalibration(valuePx, ctx.calibration, &unit);

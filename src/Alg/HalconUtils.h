@@ -1,6 +1,14 @@
 #ifndef HALCONUTILS_H
 #define HALCONUTILS_H
 
+/**
+ * @file HalconUtils.h
+ * @brief HALCON 异常与 C 字符串的安全转换工具（header-only）。
+ *
+ * HALCON 的 HString 在不同平台/版本下可能返回 UTF-8 或本地编码；
+ * safeFromCString 限制扫描长度，避免异常指针导致 QString 断言。
+ */
+
 #include <QString>
 
 #include "HalconCpp.h"
@@ -8,6 +16,10 @@
 namespace Me {
 namespace {
 
+/**
+ * 从 HALCON 返回的 char* 构造 QString。
+ * @param utf8 true 时用 fromUtf8，否则 fromLocal8Bit
+ */
 inline QString safeFromCString(const char *text, bool utf8)
 {
     if (!text) {
@@ -27,6 +39,7 @@ inline QString safeFromCString(const char *text, bool utf8)
 
 } // namespace
 
+/** 将 HException 转为可展示的 QString（优先 UTF-8 ErrorMessage） */
 inline QString fromHException(const HalconCpp::HException &ex)
 {
     try {

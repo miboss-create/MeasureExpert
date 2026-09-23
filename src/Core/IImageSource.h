@@ -1,12 +1,23 @@
 #ifndef IIMAGESOURCE_H
 #define IIMAGESOURCE_H
 
+/**
+ * @file IImageSource.h
+ * @brief 图像源抽象：统一 open / grab / close 接口。
+ *
+ * MVP 阶段主界面仍通过 ThumbnailStrip 浏览文件夹图像；
+ * FolderImageSource::grab 尚未接入，CameraImageSource 为 V2+ 占位。
+ */
+
 #include <QImage>
 #include <QString>
 
 namespace Me {
 
-// 图像源抽象（MVP：文件夹；相机仅预留）
+/**
+ * 图像采集源。
+ * grab 每次返回一帧；文件夹模式可顺序或随机（由具体实现决定）。
+ */
 class IImageSource
 {
 public:
@@ -18,7 +29,10 @@ public:
     virtual bool grab(QImage *out, QString *error = nullptr) = 0;
 };
 
-// 文件夹序列取图（预留扩展点；当前主界面仍用 ThumbnailStrip）
+/**
+ * 文件夹图像源（路径由 setFolderPath 设置）。
+ * 当前 grab 未实现，主流程请使用缩略图条选图。
+ */
 class FolderImageSource : public IImageSource
 {
 public:
@@ -59,7 +73,7 @@ private:
     bool m_opened = false;
 };
 
-// 相机取图空实现（V2+）
+/** 工业相机源占位（V2+） */
 class CameraImageSource : public IImageSource
 {
 public:

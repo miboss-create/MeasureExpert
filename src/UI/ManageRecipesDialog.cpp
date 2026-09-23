@@ -1,3 +1,5 @@
+// ManageRecipesDialog — 配方增删改与切换当前配方
+
 #include "UI/ManageRecipesDialog.h"
 
 #include "Core/ProjectService.h"
@@ -68,6 +70,7 @@ QString ManageRecipesDialog::currentId() const
 
 void ManageRecipesDialog::refreshList()
 {
+    // 刷新后尽量保持原选中项；标记 [当前] 配方
     const QString keep = currentId().isEmpty()
         ? m_service->project().activeRecipeId
         : currentId();
@@ -143,6 +146,7 @@ void ManageRecipesDialog::onRemove()
     if (id.isEmpty()) {
         return;
     }
+    // 至少保留一个配方，避免工程无 activeRecipe
     if (m_service->project().recipes.size() <= 1) {
         QMessageBox::information(this, tr("提示"), tr("至少保留一个配方。"));
         return;

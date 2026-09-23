@@ -10,6 +10,7 @@
 namespace Me {
 namespace {
 
+// 无状态工具单例：run() 为 const，全程只读上下文
 const CaliperWidthTool kCaliperWidth;
 const CaliperDiameterTool kCaliperDiameter;
 const FindLineTool kFindLine;

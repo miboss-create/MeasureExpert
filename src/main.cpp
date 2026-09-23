@@ -1,3 +1,9 @@
+/**
+ * MeasureExpert 程序入口。
+ *
+ * 初始化 Qt 应用、Fusion 风格、全局日志捕获（LogSink），
+ * 创建并显示 MainWindow。
+ */
 #include "UI/MainWindow.h"
 #include "UI/LogSink.h"
 
@@ -12,6 +18,7 @@ int main(int argc, char *argv[])
     QApplication::setOrganizationName(QStringLiteral("MeasureExpert"));
     QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
 
+    // 安装 qInstallMessageHandler，将 qDebug/qInfo 等写入日志文件
     LogSink::instance()->installMessageHandler();
 
     const QIcon appIcon(QStringLiteral(":/icons/app_icon.png"));

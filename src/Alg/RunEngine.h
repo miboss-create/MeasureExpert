@@ -17,11 +17,12 @@ public:
     explicit RunEngine(QObject *parent = nullptr);
 
 public slots:
+    /** 单次试跑：可选定位 → 全部测量 → 公差判定；结果经 cycleFinished 回主线程 */
     void runOnce(const QImage &image,
                  const Recipe &recipe,
                  const CalibrationConfig &calibration,
                  const QString &projectDir);
-    // 必须在所属线程的事件循环里调用，避免跨线程 delete
+    /** 必须在本对象所属线程的事件循环里调用，避免跨线程 delete */
     void shutdown() { deleteLater(); }
 
 signals:

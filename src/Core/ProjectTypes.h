@@ -1,6 +1,14 @@
 #ifndef PROJECTTYPES_H
 #define PROJECTTYPES_H
 
+/**
+ * @file ProjectTypes.h
+ * @brief MeasureExpert 工程数据模型：配方、测量项、标定及 JSON 序列化。
+ *
+ * 工程文件格式为 .mexp.json，顶层 Project 包含图像源、标定、多配方及当前激活配方 id。
+ * 各结构体提供 toJson / fromJson，供 ProjectService 持久化与 UI 编辑。
+ */
+
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
@@ -9,48 +17,61 @@
 
 namespace Me {
 
+/// 工程文件 format 字段标识
 inline constexpr char kProjectFormat[] = "mexp";
+/// 当前支持的工程文件版本号
 inline constexpr char kProjectFileVersion[] = "1.0";
+/// 文件对话框过滤器
 inline constexpr char kProjectFileFilter[] =
     "MeasureExpert 工程 (*.mexp.json);;所有文件 (*.*)";
 
+/** 图像输入来源类型 */
 enum class ImageSourceType {
-    Folder,
-    Camera
+    Folder, ///< 本地文件夹序列
+    Camera  ///< 工业相机（V2+ 预留）
 };
 
+/** 测量/几何工具类型，与 Alg 层 IMeasureTool 一一对应 */
 enum class MeasureType {
-    CaliperWidth,
-    CaliperDiameter,
-    FindLine,
-    FindCircle,
-    PointToLine,
-    LineIntersection,
-    Angle,
-    PointDistance
+    CaliperWidth,      ///< 卡尺测宽（measure_pairs）
+    CaliperDiameter,   ///< 卡尺测径（圆环卡尺）
+    FindLine,          ///< 矩形卡尺找线
+    FindCircle,        ///< 圆弧卡尺找圆
+    PointToLine,       ///< 点到直线距离（派生，引用 refIdA/B）
+    LineIntersection,  ///< 两直线交点（派生）
+    Angle,             ///< 两直线夹角（派生）
+    PointDistance      ///< 两点距离（派生）
 };
 
+/** 矩形搜索/模板 ROI，HALCON 图像坐标（row/col） */
 struct SearchRegion {
     double row1 = 0.0;
     double col1 = 0.0;
-    double row2 = -1.0; // <0 表示全图
+    double row2 = -1.0; ///< <0 表示全图
     double col2 = -1.0;
 
     QJsonObject toJson() const;
     static SearchRegion fromJson(const QJsonObject &obj);
 };
 
+/** 配方级定位（形状匹配）配置 */
 struct AlignmentConfig {
-    QString modelFile;
-    SearchRegion searchRegion;
-    double minScore = 0.5;
-    double angleStartDeg = 0.0;
-    double angleExtentDeg = 360.0;
+    QString modelFile;              ///< 形状模型相对/绝对路径
+    SearchRegion searchRegion;      ///< 运行时搜索 ROI
+    double minScore = 0.5;          ///< FindShapeModel 最低得分
+    double angleStartDeg = 0.0;     ///< 搜索起始角（度），须与训练一致
+    double angleExtentDeg = 360.0;  ///< 搜索角度范围（度）
 
     QJsonObject toJson() const;
     static AlignmentConfig fromJson(const QJsonObject &obj);
 };
 
+/**
+ * 卡尺/圆弧几何参数（模板坐标系，经定位 HomMat2D 变换到图像坐标）。
+ *
+ * 找线/测宽：phi 为卡尺长轴方向；length1=半长，length2=半宽。
+ * 找圆/测径：phi 为圆弧起始角；length1=半径；length2=环宽一半；angleExtent=弧角范围。
+ */
 struct CaliperGeometry {
     double row = 0.0;
     double column = 0.0;
@@ -63,6 +84,7 @@ struct CaliperGeometry {
     static CaliperGeometry fromJson(const QJsonObject &obj);
 };
 
+/** 单条测量步骤：几何 + 公差 + 派生引用 */
 struct MeasureItem {
     QString id;
     QString name;
@@ -71,9 +93,9 @@ struct MeasureItem {
     /// 派生测量引用的前序步骤 id（点线距/交点/夹角/点距）
     QString refIdA;
     QString refIdB;
-    double nominal = 0.0;
-    double upper = 0.0;
-    double lower = 0.0;
+    double nominal = 0.0;  ///< 标称值
+    double upper = 0.0;    ///< 上偏差（相对标称）
+    double lower = 0.0;    ///< 下偏差（相对标称，通常为负）
     QString unit = QStringLiteral("px");
     int decimals = 3;
 
@@ -82,6 +104,10 @@ struct MeasureItem {
     static MeasureItem createDefault(const QString &name);
 };
 
+/**
+ * 配方：一次检测流程 = 定位 + 有序测量项列表。
+ * enabled 为 false 时 RunEngine 跳过该配方。
+ */
 struct Recipe {
     QString id;
     QString name;
@@ -96,30 +122,33 @@ struct Recipe {
     int indexOfMeasure(const QString &measureId) const;
 };
 
+/** 工程级图像源配置 */
 struct ImageSourceConfig {
     ImageSourceType type = ImageSourceType::Folder;
-    QString path; // Folder 路径；Camera 参数预留
+    QString path; ///< Folder 路径；Camera 参数预留
 
     QJsonObject toJson() const;
     static ImageSourceConfig fromJson(const QJsonObject &obj);
 };
 
+/** 像素标定：将测量值在 px 与 mm 间换算 */
 struct CalibrationConfig {
     bool calibrated = false;
-    double pixelSizeMm = 1.0;
-    QString unit = QStringLiteral("px"); // "mm" | "px"
+    double pixelSizeMm = 1.0; ///< 每像素物理尺寸（mm/px）
+    QString unit = QStringLiteral("px"); ///< 显示/判定单位："mm" | "px"
 
     QJsonObject toJson() const;
     static CalibrationConfig fromJson(const QJsonObject &obj);
 };
 
+/** 完整工程内存模型 */
 struct Project {
     QString name;
     QString formatVersion = QString::fromUtf8(kProjectFileVersion);
     ImageSourceConfig imageSource;
     CalibrationConfig calibration;
     QVector<Recipe> recipes;
-    QString activeRecipeId;
+    QString activeRecipeId; ///< 当前 UI/运行选中的配方
 
     QJsonObject toJson() const;
     static Project fromJson(const QJsonObject &obj, QString *error = nullptr);
@@ -134,6 +163,7 @@ QString measureTypeToString(MeasureType type);
 MeasureType measureTypeFromString(const QString &text, bool *ok = nullptr);
 QString imageSourceTypeToString(ImageSourceType type);
 ImageSourceType imageSourceTypeFromString(const QString &text, bool *ok = nullptr);
+/** 生成无花括号的 UUID 字符串，用作 id */
 QString newId();
 
 } // namespace Me

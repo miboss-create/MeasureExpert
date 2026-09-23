@@ -1,3 +1,8 @@
+/**
+ * @file ProjectService.cpp
+ * @brief ProjectService 实现：JSON 文件 IO 与配方/测量项编辑。
+ */
+
 #include "Core/ProjectService.h"
 
 #include <QFile>
@@ -27,6 +32,8 @@ void ProjectService::replaceProject(Project project, const QString &filePath, bo
         emit dirtyChanged(m_dirty);
     }
 }
+
+// --- 工程文件 IO ---
 
 void ProjectService::createNew(const QString &name)
 {
@@ -68,6 +75,7 @@ bool ProjectService::loadFromFile(const QString &path, QString *error)
 
 bool ProjectService::saveToFile(const QString &path, QString *error)
 {
+    // QSaveFile 保证原子写入（commit 前写临时文件）
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly)) {
         if (error) {
@@ -106,6 +114,8 @@ bool ProjectService::save(QString *error)
     }
     return saveToFile(m_filePath, error);
 }
+
+// --- 脏标记与基础属性 ---
 
 void ProjectService::setDirty(bool dirty)
 {
@@ -161,6 +171,8 @@ const Recipe *ProjectService::activeRecipe() const
     return m_project.findRecipe(m_project.activeRecipeId);
 }
 
+// --- 配方 CRUD ---
+
 QString ProjectService::addRecipe(const QString &name)
 {
     Recipe recipe = Recipe::createDefault(name);
@@ -200,6 +212,8 @@ bool ProjectService::renameRecipe(const QString &recipeId, const QString &name)
     emit structureChanged();
     return true;
 }
+
+// --- 测量项 CRUD ---
 
 QString ProjectService::addMeasure(const QString &recipeId, const QString &name, MeasureType type)
 {
@@ -265,6 +279,8 @@ bool ProjectService::updateMeasure(const QString &recipeId, const MeasureItem &i
     emit structureChanged();
     return true;
 }
+
+// --- 标定与定位配置 ---
 
 void ProjectService::setCalibration(const CalibrationConfig &config)
 {

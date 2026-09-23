@@ -9,6 +9,10 @@
 
 namespace Me {
 
+/**
+ * 测量调度：组装 ToolContext，按类型调用 ToolRegistry。
+ * runAll 会把每项结果写入 priors，供派生工具引用。
+ */
 class MeasureService
 {
 public:

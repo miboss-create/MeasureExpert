@@ -13,6 +13,15 @@ RunEngine::RunEngine(QObject *parent)
 {
 }
 
+/**
+ * 单次试跑流水线（工作线程中调用）：
+ *   1) 校验图像 / 配方启用
+ *   2) 若配方有定位模板 → 形状匹配；否则跳过定位（ROI 按图像坐标）
+ *   3) 按配方顺序跑全部测量项
+ *   4) 公差判定 → 汇总 OK/NG
+ *
+ * 注意：定位失败时不整单中止；跟随类工具会各自报错，非跟随项仍可测。
+ */
 void RunEngine::runOnce(const QImage &image,
                         const Recipe &recipe,
                         const CalibrationConfig &calibration,
@@ -45,6 +54,7 @@ void RunEngine::runOnce(const QImage &image,
     ctx.calibration = calibration;
     ctx.projectDir = projectDir;
 
+    // modelFile 非空即视为「启用定位跟随」
     const bool followPose = !recipe.alignment.modelFile.isEmpty();
     if (followPose) {
         cycle.alignment = ToolRegistry::runAlignment(ctx, recipe.alignment);

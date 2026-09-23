@@ -10,6 +10,10 @@
 #include <QtGlobal>
 #include <QtMath>
 
+// ---------------------------------------------------------------------------
+// 构造 / 属性
+// ---------------------------------------------------------------------------
+
 RoiRectItem::RoiRectItem(QGraphicsItem *parent)
     : QGraphicsObject(parent)
 {
@@ -67,6 +71,10 @@ void RoiRectItem::setStyle(const QColor &color, const QString &label)
     m_label = label;
     update();
 }
+
+// ---------------------------------------------------------------------------
+// 绘制 / 命中区域
+// ---------------------------------------------------------------------------
 
 QRectF RoiRectItem::boundingRect() const
 {
@@ -129,6 +137,10 @@ void RoiRectItem::paint(QPainter *painter, const QStyleOptionGraphicsItem *optio
     painter->setPen(QPen(Qt::white, 1.0));
     painter->drawText(m_rect.topLeft() + QPointF(4, -4), m_label);
 }
+
+// ---------------------------------------------------------------------------
+// 手柄命中 / 光标 / 边界约束
+// ---------------------------------------------------------------------------
 
 RoiRectItem::Handle RoiRectItem::hitTest(const QPointF &pos) const
 {
@@ -254,6 +266,10 @@ void RoiRectItem::normalizeRect()
 {
     m_rect = enforceShape(m_rect.normalized());
 }
+
+// ---------------------------------------------------------------------------
+// 鼠标交互
+// ---------------------------------------------------------------------------
 
 void RoiRectItem::mousePressEvent(QGraphicsSceneMouseEvent *event)
 {

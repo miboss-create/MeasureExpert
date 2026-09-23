@@ -8,10 +8,13 @@
 #include "opencv2/opencv.hpp"
 
 using namespace HalconCpp;
-/**************************************************
- *cv::Mat 与 QImage 之间的转换函数。在 Qt 程序中使用 OpenCV 时有用。
+
+/**
+ * 图像格式互转工具（OpenCV / Qt / Halcon）。
  *
- **************************************************/
+ * cvMat2QImage / QImage2cvMat：Qt 与 OpenCV 桥接；
+ * QImage2HImage / HImage2QImage：Qt 与 Halcon 桥接（Halcon 侧必须 CopyImage，见 QImage2HImage 注释）。
+ */
 
 //将 OpenCV 的 cv::Mat 类型图像转换为 QImage 类型
 //@param mat 待转换的图像，支持 CV_8UC1、CV_8UC3、CV_8UC4 三种OpenCV 的数据类型

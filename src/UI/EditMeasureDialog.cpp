@@ -1,3 +1,5 @@
+// EditMeasureDialog — 测量项属性编辑（类型驱动字段可见性）
+
 #include "UI/EditMeasureDialog.h"
 
 #include <QComboBox>
@@ -13,6 +15,7 @@
 namespace Me {
 namespace {
 
+/** 需要 ROI 几何字段的测量类型 */
 bool needsRoi(MeasureType t)
 {
     return t == MeasureType::CaliperWidth
@@ -21,6 +24,7 @@ bool needsRoi(MeasureType t)
         || t == MeasureType::FindCircle;
 }
 
+/** 需要引用 A/B 的派生测量类型 */
 bool needsRefs(MeasureType t)
 {
     return t == MeasureType::PointToLine
@@ -29,6 +33,7 @@ bool needsRefs(MeasureType t)
         || t == MeasureType::PointDistance;
 }
 
+/** 找圆专用：圆弧扫描范围 */
 bool needsAngleExtent(MeasureType t)
 {
     return t == MeasureType::FindCircle;

@@ -1,3 +1,5 @@
+// CalibrationDialog — 像素当量标定
+
 #include "UI/CalibrationDialog.h"
 
 #include <QCheckBox>

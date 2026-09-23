@@ -1,3 +1,15 @@
+// ============================================================================
+// MainWindow.cpp — 主窗口实现
+//
+// 主要流程簇：
+//   1. 构造 / RunEngine 工作线程
+//   2. ROI 编辑（定位模板、卡尺/找圆，二次点击确认）
+//   3. 模板↔图像坐标换算（followPose）
+//   4. 工程 / 图像 / 标定
+//   5. 试跑调度（单次 / 连续 / CSV）
+//   6. 配方与测量项管理
+// ============================================================================
+
 #include "MainWindow.h"
 
 #include "Alg/AlignmentService.h"
@@ -56,10 +68,13 @@ using Me::ProjectService;
 using Me::RunEngine;
 using Me::TrainAlignmentDialog;
 
+// ---- 构造与生命周期 ----
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , m_projectService(new ProjectService(this))
 {
+    // 跨线程信号槽（QueuedConnection）需注册自定义类型
     qRegisterMetaType<Me::CycleResult>("Me::CycleResult");
     qRegisterMetaType<Me::MeasureResult>("Me::MeasureResult");
     qRegisterMetaType<QVector<Me::MeasureResult>>("QVector<Me::MeasureResult>");
@@ -130,6 +145,8 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
     }
     QMainWindow::keyPressEvent(event);
 }
+
+// ---- ROI 编辑模式 ----
 
 void MainWindow::updateRoiActionTexts()
 {
@@ -235,6 +252,8 @@ void MainWindow::onCancelRoiEdit()
     qInfo().noquote() << tr("已取消 ROI 编辑");
 }
 
+// ---- 测量几何：模板坐标 ↔ 图像坐标 ----
+
 QRectF MainWindow::measureGeometryToImageRect(const Me::CaliperGeometry &geo,
                                              const Me::AlignmentResult &align,
                                              Me::MeasureType type) const
@@ -290,6 +309,8 @@ bool MainWindow::imageRectToMeasureGeometry(const QRectF &imageRect,
     return true;
 }
 
+// ---- RunEngine 工作线程 ----
+
 void MainWindow::shutdownRunEngine()
 {
     if (!m_runEngine && !m_runThread) {
@@ -325,6 +346,8 @@ void MainWindow::setupRunEngine()
 
     m_runThread->start();
 }
+
+// ---- 界面布局（三栏：配置+日志 | 缩略图+主图 | 判定+属性） ----
 
 bool MainWindow::initWidget()
 {
@@ -438,6 +461,8 @@ bool MainWindow::initWidget()
     setCentralWidget(m_mainSplitter);
     return true;
 }
+
+// ---- 菜单 / 工具栏 / 状态栏 ----
 
 void MainWindow::createMenus()
 {
@@ -589,6 +614,7 @@ void MainWindow::setBusyUi(bool busy)
 
 void MainWindow::applyAppModeUi()
 {
+    // 编辑能力：仅 Edit 模式且未在试跑；运行按钮：未 busy/continuous 时可启动
     const bool edit = (m_appMode == AppMode::Edit);
     const bool canEdit = edit && !m_busy && !m_continuous;
 
@@ -620,6 +646,8 @@ void MainWindow::applyAppModeUi()
         m_modeToggleAction->setText(edit ? tr("切换到运行模式") : tr("切换到编辑模式"));
     }
 }
+
+// ---- 列表刷新与属性面板 ----
 
 void MainWindow::refreshRecipeList()
 {
@@ -760,6 +788,8 @@ void MainWindow::applyCycleResult(const Me::CycleResult &result)
                              .arg(result.elapsedMs);
 }
 
+// ---- 工程文件操作 ----
+
 void MainWindow::maybeLoadImageFolderFromProject()
 {
     const auto &src = m_projectService->project().imageSource;
@@ -875,6 +905,8 @@ void MainWindow::onSaveProjectAs()
     saveProjectInternal(true);
 }
 
+// ---- 图像加载 ----
+
 void MainWindow::onLoadImage()
 {
     const QString path = QFileDialog::getOpenFileName(
@@ -914,6 +946,8 @@ void MainWindow::onLoadFolder()
                              .arg(m_sourceThumbs->count());
 }
 
+// ---- 标定 ----
+
 void MainWindow::onCalibration()
 {
     CalibrationDialog dlg(m_projectService->project().calibration, this);
@@ -926,6 +960,8 @@ void MainWindow::onCalibration()
                              .arg(m_projectService->project().calibration.calibrated)
                              .arg(m_projectService->project().calibration.pixelSizeMm);
 }
+
+// ---- 定位模板训练（二次点击：进入 ROI → 确认训练） ----
 
 void MainWindow::onTrainAlignment()
 {
@@ -1004,6 +1040,8 @@ void MainWindow::onTrainAlignment()
     QMessageBox::information(this, tr("完成"), tr("定位模板已保存到:\n%1").arg(absModel));
 }
 
+// ---- 测量 ROI（followPose：有模型则相对模板，否则图像坐标） ----
+
 void MainWindow::onDrawMeasureRoi()
 {
     if (m_roiEditMode == RoiEditMode::AlignTemplate) {
@@ -1045,10 +1083,12 @@ void MainWindow::onDrawMeasureRoi()
         return;
     }
 
-    // 第一次：进入编辑；第二次：确认写入几何（有定位则相对模板，否则图像坐标）
+    // 第一次点击：进入编辑，按 followPose 投影已有几何为种子 ROI
+    // 第二次点击：确认写入几何（有定位则相对模板，否则图像坐标）
     if (m_roiEditMode != RoiEditMode::MeasureCaliper) {
         Me::AlignmentResult align;
         if (followPose) {
+            // followPose：用当前图定位位姿，把相对模板几何反投影到图像
             align = Me::AlignmentService::find(m_currentImage, alignCfg, projectDir(), false);
         }
         QRectF seed;
@@ -1090,6 +1130,7 @@ void MainWindow::onDrawMeasureRoi()
         return;
     }
 
+    // --- ROI 确认：再次定位，将图像矩形逆变换为相对模板 CaliperGeometry ---
     qInfo().noquote() << tr("确认卡尺 ROI...");
     Me::AlignmentResult align;
     if (followPose) {
@@ -1182,6 +1223,8 @@ void MainWindow::onDrawMeasureRoi()
                              .arg(geo.length2, 0, 'f', 2);
 }
 
+// ---- 测量项编辑 ----
+
 void MainWindow::onEditMeasure()
 {
     const QString recipeId = selectedRecipeId();
@@ -1226,6 +1269,8 @@ void MainWindow::onEditMeasure()
     m_projectService->updateMeasure(recipeId, item);
     updateWindowTitle();
 }
+
+// ---- 试跑：单次 / 连续 / 停止 ----
 
 void MainWindow::onRunOnce()
 {
@@ -1358,6 +1403,7 @@ void MainWindow::onCycleFinished(const Me::CycleResult &result)
     applyCycleResult(result);
     maybeWriteCsv(result);
 
+    // 非连续或用户已点停止：结束 busy 状态
     if (m_stopRequested || !m_continuous) {
         m_continuous = false;
         m_stopRequested = false;
@@ -1365,7 +1411,7 @@ void MainWindow::onCycleFinished(const Me::CycleResult &result)
         return;
     }
 
-    // 连续：切下一张（到末尾则回到第一张）再跑
+    // 连续模式：切下一张（ThumbnailStrip 到末尾回绕）→ 再 dispatchRunOnce
     if (m_sourceThumbs->count() <= 0) {
         m_continuous = false;
         setBusyUi(false);
@@ -1374,7 +1420,7 @@ void MainWindow::onCycleFinished(const Me::CycleResult &result)
     }
     m_sourceThumbs->selectNext();
     // selectNext 会同步更新 m_currentImage
-    setBusyUi(false); // 短暂释放，再派发下一轮
+    setBusyUi(false); // 周期间隙短暂释放 UI，便于响应停止
     if (m_stopRequested) {
         m_continuous = false;
         m_stopRequested = false;
@@ -1389,6 +1435,8 @@ void MainWindow::onRunError(const QString &message)
 {
     qWarning().noquote() << message;
 }
+
+// ---- 缩略图 / 配方 / 测量项槽 ----
 
 void MainWindow::onThumbImageChanged(const QImage &image)
 {

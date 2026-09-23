@@ -1,3 +1,5 @@
+// TrainAlignmentDialog — 确认定位训练参数（ROI 已在主图绘制）
+
 #include "UI/TrainAlignmentDialog.h"
 
 #include <QDialogButtonBox>

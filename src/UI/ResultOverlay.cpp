@@ -8,17 +8,20 @@
 namespace Me {
 namespace {
 
+/** AlgTypes 点 → Qt 坐标（x=col, y=row） */
 QPointF toQt(const Point2D &p)
 {
     return QPointF(p.col, p.row);
 }
 
+/** 以 pt 为中心绘制十字标记（边缘点/圆心常用） */
 void drawCross(QPainter &p, const QPointF &pt, double arm)
 {
     p.drawLine(QPointF(pt.x() - arm, pt.y()), QPointF(pt.x() + arm, pt.y()));
     p.drawLine(QPointF(pt.x(), pt.y() - arm), QPointF(pt.x(), pt.y() + arm));
 }
 
+/** 黑描边 + 彩色填充，提高复杂背景上的可读性 */
 void drawTextOutlined(QPainter &p, const QPointF &baselinePos, const QString &text, const QColor &fill)
 {
     if (text.isEmpty()) {
@@ -48,7 +51,7 @@ void drawContours(QPainter &p, const QVector<Contour2D> &contours, const QColor 
     p.setPen(pen);
     p.setBrush(Qt::NoBrush);
     int drawnPts = 0;
-    constexpr int kMaxDrawPts = 50000;
+    constexpr int kMaxDrawPts = 50000; ///< 防止超大轮廓拖垮绘制性能
     for (const Contour2D &c : contours) {
         if (c.points.size() < 2) {
             continue;
@@ -71,6 +74,7 @@ bool isCaliperType(MeasureType t)
     return t == MeasureType::CaliperWidth || t == MeasureType::CaliperDiameter;
 }
 
+/** 绘制拟合线段：中点延伸 preferHalfLen，端点圆点标记 */
 void drawFittedLine(QPainter &p, const LineGeom &line, double preferHalfLen, const QColor &color)
 {
     if (!line.valid
@@ -104,6 +108,10 @@ void drawFittedLine(QPainter &p, const LineGeom &line, double preferHalfLen, con
 
 } // namespace
 
+// ---------------------------------------------------------------------------
+// 轻量轮廓叠加
+// ---------------------------------------------------------------------------
+
 QImage ResultOverlay::renderContours(const QImage &source,
                                      const QVector<Contour2D> &contours,
                                      const QRectF *roi)
@@ -128,6 +136,10 @@ QImage ResultOverlay::renderContours(const QImage &source,
     return out;
 }
 
+// ---------------------------------------------------------------------------
+// 完整 CycleResult 叠加
+// ---------------------------------------------------------------------------
+
 QImage ResultOverlay::render(const QImage &source, const CycleResult &result)
 {
     if (source.isNull()) {
@@ -138,6 +150,7 @@ QImage ResultOverlay::render(const QImage &source, const CycleResult &result)
     p.setRenderHint(QPainter::Antialiasing, true);
     p.setFont(QFont(QStringLiteral("Microsoft YaHei"), 11, QFont::Bold));
 
+    // --- 定位结果 ---
     if (result.alignment.ok) {
         drawContours(p, result.alignment.modelContours, QColor(0, 255, 100), 2.0);
 
@@ -149,6 +162,7 @@ QImage ResultOverlay::render(const QImage &source, const CycleResult &result)
         p.drawLine(origin, origin + QPointF(50 * qCos(a), 50 * qSin(a)));
     }
 
+    // --- 各测量项几何 ---
     for (const auto &m : result.measures) {
         const bool hasGeom = m.line.valid || m.circle.valid || m.hasPoint
             || !m.firstEdges.isEmpty() || m.measured
@@ -160,6 +174,7 @@ QImage ResultOverlay::render(const QImage &source, const CycleResult &result)
         const QColor okColor = m.ok ? QColor(50, 220, 80) : QColor(255, 60, 60);
         const QColor measureColor(255, 220, 0);
 
+        // 卡尺/找线：局部坐标系下绘制 length1×length2 矩形框
         if (isCaliperType(m.type) || m.type == MeasureType::FindLine) {
             p.save();
             p.translate(m.imageCol, m.imageRow);
@@ -176,6 +191,7 @@ QImage ResultOverlay::render(const QImage &source, const CycleResult &result)
             p.restore();
         }
 
+        // 找圆：内外两圈表示环带搜索区域（length1=半径, length2=环宽）
         if (m.type == MeasureType::FindCircle && m.length1 > 0
             && qIsFinite(m.imageRow) && qIsFinite(m.imageCol)
             && qIsFinite(m.length1) && qIsFinite(m.length2)) {

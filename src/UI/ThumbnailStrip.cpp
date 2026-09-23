@@ -13,7 +13,7 @@ namespace {
 constexpr int kThumbSize = 96;
 constexpr int kVerticalWidth = 120;
 constexpr int kHorizontalHeight = 100;
-}
+} // namespace
 
 ThumbnailStrip::ThumbnailStrip(Orientation orientation, QWidget *parent)
     : QWidget(parent)
@@ -67,6 +67,7 @@ bool ThumbnailStrip::initWidget()
     return true;
 }
 
+/** 支持的图像扩展名（与 QImageReader 可读格式对齐） */
 QStringList ThumbnailStrip::imageNameFilters()
 {
     return {QStringLiteral("*.png"),
@@ -131,6 +132,10 @@ void ThumbnailStrip::addImagePath(const QString &path)
 
     m_paths.push_back(path);
 }
+
+// ---------------------------------------------------------------------------
+// 文件夹加载 / 导航
+// ---------------------------------------------------------------------------
 
 bool ThumbnailStrip::loadFolder(const QString &folderPath)
 {
@@ -214,6 +219,7 @@ void ThumbnailStrip::onCurrentRowChanged(int row)
         return;
     }
 
+    // 选中变更时再读原图，避免 loadFolder 时一次性占用大量内存
     const QString path = m_paths.at(row);
     QImageReader reader(path);
     reader.setAutoTransform(true);

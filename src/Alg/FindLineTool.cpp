@@ -8,7 +8,18 @@ using namespace Me::ToolCommon;
 namespace Me {
 namespace {
 
-// 沿卡尺长边布多条测量线，每条只取最强边缘。单条 measure_pos 对一条边往往只有 1 个点。
+/**
+ * 沿卡尺某一方向等距布细卡尺，每条 MeasurePos 只取最强边缘点。
+ *
+ * 为何不用单条 gen_measure_rectangle2 + measure_pos：
+ *   单次剖面在一条明显边缘上通常只得到 1 个点，无法拟合直线。
+ *
+ * @param rowC/colC   卡尺中心
+ * @param phi         该组细卡尺的朝向（搜索方向）
+ * @param halfSearch  沿 phi 的半搜索长（Measure 的 length1）
+ * @param halfAlong   垂直于 phi 的半跨度，用于决定采样条数与间距
+ * @param threshold   边缘幅度阈值
+ */
 QVector<Point2D> sampleEdgesAlong(const HalconCpp::HImage &gray,
                                   Hlong width,
                                   Hlong height,
@@ -24,9 +35,12 @@ QVector<Point2D> sampleEdgesAlong(const HalconCpp::HImage &gray,
         return pts;
     }
 
+    // 约每 6px 一条，限制在 [5, 31]
     const int samples = qBound(5, static_cast<int>((halfAlong * 2.0) / 6.0), 31);
     const double step = (2.0 * halfAlong) / static_cast<double>(samples - 1);
+    // 细卡尺的 length2：略小于半步长，减少相邻剖面互相干扰
     const double subL2 = qBound(1.0, step * 0.45, 6.0);
+    // 沿垂直于 phi 的方向平移中心：HALCON phi 的法向为 (cos, -sin) 在 row/col 下
     const double s = qSin(phi);
     const double c = qCos(phi);
 
@@ -95,6 +109,7 @@ MeasureResult FindLineTool::run(const MeasureItem &item, const ToolContext &ctx)
         Hlong height = 0;
         gray.GetImageSize(&width, &height);
 
+        // 可选定位跟随：有模板时 ROI 相对模板，运行时仿射到当前图
         double rowImg = 0.0;
         double colImg = 0.0;
         double phiImg = 0.0;
@@ -107,10 +122,12 @@ MeasureResult FindLineTool::run(const MeasureItem &item, const ToolContext &ctx)
             return failResult(item, QStringLiteral("卡尺坐标非有限值"));
         }
 
-        // 矩形宽、高都可能才是“横跨边缘”的方向，两种都采样，取得点更多的一侧
+        // 用户画的矩形：不知道长边还是短边横跨边缘，两个正交方向都采，取点数更多的一侧
+        // alongPhi：phi 为搜索向，length1 为半搜索，length2 为沿线半跨度
         const QVector<Point2D> alongPhi = sampleEdgesAlong(
             gray, width, height, rowImg, colImg, phiImg,
             item.geometry.length1, item.geometry.length2, 10.0);
+        // acrossPhi：旋转 90°，交换 length1/length2 角色
         const QVector<Point2D> acrossPhi = sampleEdgesAlong(
             gray, width, height, rowImg, colImg, phiImg + 1.5707963267948966,
             item.geometry.length2, item.geometry.length1, 10.0);
@@ -131,7 +148,7 @@ MeasureResult FindLineTool::run(const MeasureItem &item, const ToolContext &ctx)
             return result;
         }
 
-        // 仅用过滤后的有限点拟合，避免脏 HTuple；regression 对少点更稳
+        // 用过滤后的有限点建 XLD；regression 对少点/噪声更稳
         HTuple rows;
         HTuple cols;
         for (const Point2D &p : result.firstEdges) {
@@ -165,6 +182,7 @@ MeasureResult FindLineTool::run(const MeasureItem &item, const ToolContext &ctx)
             return result;
         }
 
+        // HALCON 直线：nr*row + nc*col = dist（法线式）
         result.line.valid = true;
         result.line.rowBegin = rowBegin[0].D();
         result.line.colBegin = colBegin[0].D();
@@ -184,6 +202,7 @@ MeasureResult FindLineTool::run(const MeasureItem &item, const ToolContext &ctx)
             return result;
         }
 
+        // 测量值取拟合线段两端点的欧氏长度（供显示；OK/NG 不依赖此值）
         const double dr = result.line.rowEnd - result.line.rowBegin;
         const double dc = result.line.colEnd - result.line.colBegin;
         const double lenPx = qSqrt(dr * dr + dc * dc);

@@ -4,6 +4,10 @@
 
 #include <QHBoxLayout>
 
+// ---------------------------------------------------------------------------
+// 构造：创建 CustomGraphicsView 并透传 ROI 相关信号
+// ---------------------------------------------------------------------------
+
 CustomImageView::CustomImageView(QWidget *parent)
     : QWidget(parent)
 {

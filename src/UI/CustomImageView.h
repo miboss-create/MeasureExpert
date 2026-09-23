@@ -11,7 +11,12 @@
 
 class CustomGraphicsView;
 
-// 对外图像窗口：显示 QImage，支持缩放拖拽与 ROI 编辑
+/**
+ * 对外图像窗口（QWidget 薄封装）
+ *
+ * 内部持有 CustomGraphicsView，将 ROI / 图像 / 视图工具能力以统一 API 暴露给 MainWindow。
+ * 信号与槽均透传，调用方无需直接操作 QGraphicsView。
+ */
 class CustomImageView : public QWidget
 {
     Q_OBJECT
@@ -22,13 +27,15 @@ public:
     bool initWidget();
     const QImage &image() const { return m_image; }
 
+    /** 以下 ROI 接口均转发至 CustomGraphicsView */
     void setRoiEditEnabled(bool enabled);
     bool isRoiEditEnabled() const;
     bool isRoiDrawing() const;
     void setRoiStyle(const QColor &color, const QString &label);
     void setRoiShape(RoiRectItem::Shape shape);
     RoiRectItem::Shape roiShape() const;
-    QRectF roiImageRect() const; // x=col, y=row
+    /** ROI 外接矩形，图像像素坐标 (x=col, y=row) */
+    QRectF roiImageRect() const;
     void setRoiImageRect(const QRectF &rect);
     void clearRoi();
     bool hasRoi() const;
@@ -45,7 +52,7 @@ signals:
 
 private:
     CustomGraphicsView *m_graphicsView = nullptr;
-    QImage m_image;
+    QImage m_image; ///< 本地缓存，供 image() 只读访问
 };
 
 #endif // CUSTOMIMAGEVIEW_H

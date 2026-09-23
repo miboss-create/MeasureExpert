@@ -5,6 +5,11 @@
 
 namespace Me {
 
+/**
+ * OK/NG 判定：
+ *   找线/交点 → 测到即 OK；
+ *   其余 → value 落在 [nominal+lower, nominal+upper]。
+ */
 class ToleranceService
 {
 public:

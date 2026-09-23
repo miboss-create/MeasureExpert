@@ -1,9 +1,16 @@
+/**
+ * @file ProjectTypes.cpp
+ * @brief ProjectTypes 的 JSON 序列化、枚举字符串转换及工厂方法实现。
+ */
+
 #include "Core/ProjectTypes.h"
 
 #include <QUuid>
 
 namespace Me {
 namespace {
+
+// --- JSON 字段读取辅助（缺省或类型不符时返回 fallback）---
 
 double jsonDouble(const QJsonObject &obj, const char *key, double fallback)
 {
@@ -31,10 +38,14 @@ bool jsonBool(const QJsonObject &obj, const char *key, bool fallback)
 
 } // namespace
 
+// --- 通用工具 ---
+
 QString newId()
 {
     return QUuid::createUuid().toString(QUuid::WithoutBraces);
 }
+
+// --- MeasureType / ImageSourceType 字符串互转（持久化用）---
 
 QString measureTypeToString(MeasureType type)
 {
@@ -122,6 +133,8 @@ ImageSourceType imageSourceTypeFromString(const QString &text, bool *ok)
     return ImageSourceType::Folder;
 }
 
+// --- SearchRegion ---
+
 QJsonObject SearchRegion::toJson() const
 {
     QJsonObject obj;
@@ -141,6 +154,8 @@ SearchRegion SearchRegion::fromJson(const QJsonObject &obj)
     r.col2 = jsonDouble(obj, "col2", -1.0);
     return r;
 }
+
+// --- AlignmentConfig ---
 
 QJsonObject AlignmentConfig::toJson() const
 {
@@ -163,6 +178,8 @@ AlignmentConfig AlignmentConfig::fromJson(const QJsonObject &obj)
     a.angleExtentDeg = jsonDouble(obj, "angleExtentDeg", 360.0);
     return a;
 }
+
+// --- CaliperGeometry ---
 
 QJsonObject CaliperGeometry::toJson() const
 {
@@ -187,6 +204,8 @@ CaliperGeometry CaliperGeometry::fromJson(const QJsonObject &obj)
     g.angleExtent = jsonDouble(obj, "angleExtent", 6.283185307179586);
     return g;
 }
+
+// --- MeasureItem ---
 
 MeasureItem MeasureItem::createDefault(const QString &name)
 {
@@ -232,6 +251,8 @@ MeasureItem MeasureItem::fromJson(const QJsonObject &obj)
     item.decimals = jsonInt(obj, "decimals", 3);
     return item;
 }
+
+// --- Recipe ---
 
 Recipe Recipe::createDefault(const QString &name)
 {
@@ -283,6 +304,8 @@ Recipe Recipe::fromJson(const QJsonObject &obj)
     return recipe;
 }
 
+// --- ImageSourceConfig / CalibrationConfig ---
+
 QJsonObject ImageSourceConfig::toJson() const
 {
     QJsonObject obj;
@@ -316,6 +339,8 @@ CalibrationConfig CalibrationConfig::fromJson(const QJsonObject &obj)
     cfg.unit = jsonString(obj, "unit", QStringLiteral("px"));
     return cfg;
 }
+
+// --- Project ---
 
 Project Project::createNew(const QString &name)
 {
@@ -391,6 +416,7 @@ Project Project::fromJson(const QJsonObject &obj, QString *error)
         }
     }
 
+    // 兼容空配方或 activeRecipeId 失效的旧文件
     if (project.recipes.isEmpty()) {
         Recipe recipe = Recipe::createDefault(QStringLiteral("默认配方"));
         project.recipes.push_back(recipe);

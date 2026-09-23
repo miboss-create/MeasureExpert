@@ -5,6 +5,7 @@
 namespace Me {
 namespace {
 
+/** 中间几何：找到即合格，不与名义公差比较 */
 bool isGeometryPassThrough(MeasureType type)
 {
     return type == MeasureType::FindLine
@@ -13,6 +14,13 @@ bool isGeometryPassThrough(MeasureType type)
 
 } // namespace
 
+/**
+ * 单项判定：
+ *   - 未测到 → NG
+ *   - 找线/交点 → 测到即 OK
+ *   - 其余（宽度/直径/找圆半径/派生距离角等）→
+ *       value ∈ [nominal+lower, nominal+upper]
+ */
 bool ToleranceService::judgeItem(MeasureResult &result)
 {
     if (!result.measured) {
@@ -23,7 +31,6 @@ bool ToleranceService::judgeItem(MeasureResult &result)
         return false;
     }
 
-    // 找线 / 交点：作为中间几何，找到即合格
     if (isGeometryPassThrough(result.type)) {
         result.ok = true;
         return true;
@@ -38,6 +45,7 @@ bool ToleranceService::judgeItem(MeasureResult &result)
     return result.ok;
 }
 
+/** 全部合格才 totalOk；reason 列出不合格项名称 */
 bool ToleranceService::judgeAll(QVector<MeasureResult> &results, QString *reason)
 {
     if (results.isEmpty()) {

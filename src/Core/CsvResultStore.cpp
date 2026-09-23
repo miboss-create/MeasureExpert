@@ -1,3 +1,8 @@
+/**
+ * @file CsvResultStore.cpp
+ * @brief CsvResultStore 实现：RFC 4180 风格转义与按日分文件追加。
+ */
+
 #include "Core/CsvResultStore.h"
 
 #include <QCoreApplication>
@@ -12,6 +17,7 @@
 namespace Me {
 namespace {
 
+/** 含逗号/引号/换行时加双引号并转义内部引号 */
 QString csvEscape(const QString &text)
 {
     if (!text.contains(QLatin1Char(',')) && !text.contains(QLatin1Char('"'))
@@ -63,6 +69,7 @@ bool CsvResultStore::append(const QString &filePath,
     QTextStream out(&file);
     out.setEncoding(QStringConverter::Utf8);
 
+    // 新文件写表头
     if (!exists) {
         out << QStringLiteral(
             "timestamp,recipe,image,total_ok,elapsed_ms,reason,"
@@ -73,6 +80,7 @@ bool CsvResultStore::append(const QString &filePath,
         QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd hh:mm:ss.zzz"));
     const QString totalOk = result.totalOk ? QStringLiteral("OK") : QStringLiteral("NG");
 
+    // 无测量项时仍写一行汇总，便于追溯定位失败等场景
     if (result.measures.isEmpty()) {
         out << csvEscape(stamp) << ','
             << csvEscape(recipeName) << ','

@@ -24,7 +24,8 @@ struct ToolContext {
 
 /**
  * 测量工具统一接口。
- * Alignment 通过 AlignmentTool 包装；卡尺/找线/找圆/派生各自实现。
+ * 卡尺/找线/找圆/派生各自实现 IMeasureTool；定位走 IAlignmentTool。
+ * 调度入口：ToolRegistry → MeasureService / RunEngine。
  */
 class IMeasureTool
 {
@@ -34,7 +35,7 @@ public:
     virtual MeasureResult run(const MeasureItem &item, const ToolContext &ctx) const = 0;
 };
 
-/** 定位工具（配方流水线第一步，不进入 measures 列表）。 */
+/** 定位工具（配方流水线可选第一步，不进入 measures 列表） */
 class IAlignmentTool
 {
 public:

@@ -11,6 +11,10 @@
 
 namespace {
 
+/**
+ * Qt 全局消息回调：格式化 → 写文件 → 通知 UI。
+ * 与 LogSink 单例配合，避免多处重复安装 handler。
+ */
 void messageHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg)
 {
     Q_UNUSED(context);
@@ -77,6 +81,10 @@ void messageHandler(QtMsgType type, const QMessageLogContext &context, const QSt
 }
 
 } // namespace
+
+// ---------------------------------------------------------------------------
+// 单例 / 消息处理器安装
+// ---------------------------------------------------------------------------
 
 LogSink *LogSink::s_instance = nullptr;
 

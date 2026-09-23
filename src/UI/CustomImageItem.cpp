@@ -18,6 +18,7 @@ void CustomImageItem::hoverMoveEvent(QGraphicsSceneHoverEvent *event)
         return;
     }
 
+    // 局部坐标 clamp 到有效像素范围，避免边缘浮点误差越界
     const QPointF pos = event->pos();
     const int x = qBound(0, static_cast<int>(pos.x()), pm.width() - 1);
     const int y = qBound(0, static_cast<int>(pos.y()), pm.height() - 1);

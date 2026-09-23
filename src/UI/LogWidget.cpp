@@ -7,6 +7,10 @@
 #include <QTextBrowser>
 #include <QVBoxLayout>
 
+// ---------------------------------------------------------------------------
+// 构造：订阅 LogSink，QueuedConnection 跨线程安全
+// ---------------------------------------------------------------------------
+
 LogWidget::LogWidget(QWidget *parent)
     : QWidget(parent)
 {
@@ -38,6 +42,7 @@ bool LogWidget::initWidget()
     mainLayout->addWidget(btnRow);
 
     connect(m_clearBtn, &QPushButton::clicked, this, &LogWidget::onClearClicked);
+    // QueuedConnection：允许非 UI 线程的 qDebug/qInfo 安全追加到 QTextBrowser
     connect(LogSink::instance(),
             &LogSink::htmlMessageReady,
             m_browser,

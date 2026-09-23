@@ -1,3 +1,8 @@
+/**
+ * @file AlignmentService.cpp
+ * @brief AlignmentService 实现：QImage→HImage、CreateShapeModel、FindShapeModel。
+ */
+
 #include "Alg/AlignmentService.h"
 
 #include "Alg/HalconUtils.h"
@@ -17,6 +22,7 @@ namespace {
 constexpr Hlong kMaxContours = 256;
 constexpr Hlong kMaxPointsPerContour = 20000;
 
+/** 相对路径基于 projectDir 解析，绝对路径原样返回 */
 QString resolveModelPath(const QString &modelFile, const QString &projectDir)
 {
     if (modelFile.isEmpty()) {
@@ -32,6 +38,7 @@ QString resolveModelPath(const QString &modelFile, const QString &projectDir)
     return QFileInfo(modelFile).absoluteFilePath();
 }
 
+/** 转灰度 HImage；彩色图经 Rgb1ToGray */
 HImage toGrayHImage(QImage image, QString *error)
 {
     if (image.isNull()) {
@@ -60,6 +67,7 @@ HImage toGrayHImage(QImage image, QString *error)
     return color.Rgb1ToGray();
 }
 
+/** 失败或未匹配时 homMat 设为单位阵，便于下游跳过变换 */
 void fillIdentity(AlignmentResult &r)
 {
     r.homMat2D[0] = 1;
@@ -70,6 +78,10 @@ void fillIdentity(AlignmentResult &r)
     r.homMat2D[5] = 0;
 }
 
+/**
+ * 将形状模型轮廓仿射到 (row, column, angleRad) 姿态，供 UI 叠加。
+ * 轮廓点数过多时按 step 降采样，并限制轮廓条数。
+ */
 QVector<Contour2D> extractContoursAtPose(const HTuple &modelId,
                                          double row,
                                          double column,
@@ -125,6 +137,7 @@ QVector<Contour2D> extractContoursAtPose(const HTuple &modelId,
                 }
                 contour.points.push_back(pt);
             }
+            // 降采样时补最后一个点，避免轮廓末端被截断
             if (step > 1 && nPts > 1) {
                 Point2D last;
                 last.row = rows[nPts - 1].D();
@@ -146,6 +159,8 @@ QVector<Contour2D> extractContoursAtPose(const HTuple &modelId,
 }
 
 } // namespace
+
+// --- createModel：ReduceDomain + CreateShapeModel + WriteShapeModel ---
 
 bool AlignmentService::createModel(const QImage &image,
                                    const SearchRegion &modelRoi,
@@ -169,6 +184,7 @@ bool AlignmentService::createModel(const QImage &image,
         double c1 = modelRoi.col1;
         double r2 = modelRoi.row2;
         double c2 = modelRoi.col2;
+        // row2/col2<0 时使用图像中心 60% 区域作为默认模板 ROI
         if (r2 < 0 || c2 < 0) {
             r1 = height * 0.2;
             c1 = width * 0.2;
@@ -224,6 +240,8 @@ bool AlignmentService::createModel(const QImage &image,
         return false;
     }
 }
+
+// --- find：可选搜索 ROI + FindShapeModel + HomMat2D ---
 
 AlignmentResult AlignmentService::find(const QImage &image,
                                        const AlignmentConfig &config,

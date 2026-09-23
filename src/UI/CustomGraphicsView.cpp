@@ -18,8 +18,10 @@
 namespace {
 constexpr double kZoomMax = 50.0;
 constexpr double kZoomMin = 0.1;
+/// 无图像时的默认场景留白（支持负坐标平移）
 constexpr qreal kDefaultScenePad = 2000.0;
 
+/** 底部工具栏：选择工具图标（矢量绘制，不依赖资源文件） */
 QIcon makePointerIcon()
 {
     QPixmap pm(20, 20);
@@ -36,6 +38,7 @@ QIcon makePointerIcon()
     return QIcon(pm);
 }
 
+/** 平移工具图标 */
 QIcon makeHandIcon()
 {
     QPixmap pm(20, 20);
@@ -52,6 +55,7 @@ QIcon makeHandIcon()
     return QIcon(pm);
 }
 
+/** 放大镜工具图标 */
 QIcon makeZoomIcon()
 {
     QPixmap pm(20, 20);
@@ -66,6 +70,10 @@ QIcon makeZoomIcon()
 }
 
 } // namespace
+
+// ---------------------------------------------------------------------------
+// 构造 / 初始化
+// ---------------------------------------------------------------------------
 
 CustomGraphicsView::CustomGraphicsView(QWidget *parent)
     : QGraphicsView(parent)
@@ -152,6 +160,10 @@ bool CustomGraphicsView::initWidget()
     applyViewTool();
     return true;
 }
+
+// ---------------------------------------------------------------------------
+// ROI 辅助
+// ---------------------------------------------------------------------------
 
 QRectF CustomGraphicsView::imageBounds() const
 {
@@ -250,6 +262,10 @@ void CustomGraphicsView::deleteRoiFromMenu()
         enterRoiDrawing();
     }
 }
+
+// ---------------------------------------------------------------------------
+// 图像加载
+// ---------------------------------------------------------------------------
 
 void CustomGraphicsView::setImage(const QImage &image)
 {
@@ -352,6 +368,10 @@ bool CustomGraphicsView::hasRoi() const
            && m_roiItem->roiRect().height() >= 4.0;
 }
 
+// ---------------------------------------------------------------------------
+// 鼠标 / 滚轮 / 菜单事件
+// ---------------------------------------------------------------------------
+
 void CustomGraphicsView::wheelEvent(QWheelEvent *event)
 {
     if (m_image.isNull()) {
@@ -378,6 +398,7 @@ void CustomGraphicsView::mousePressEvent(QMouseEvent *event)
 
     const QPoint viewPos = event->position().toPoint();
     const QPointF scenePos = mapToScene(viewPos);
+    // 事件优先级：ROI 命中 > 绘制态左键 > 放大镜 > 视图工具默认
     const bool onRoi = m_roiEditEnabled && hitRoi(scenePos);
 
     if (m_roiEditEnabled && event->button() == Qt::LeftButton && onRoi) {
@@ -420,6 +441,7 @@ void CustomGraphicsView::mousePressEvent(QMouseEvent *event)
 
 void CustomGraphicsView::mouseDoubleClickEvent(QMouseEvent *event)
 {
+    // ROI 编辑 / 放大镜模式下不响应双击复位，避免误触
     if (event->button() == Qt::LeftButton && !m_image.isNull() && !m_roiEditEnabled
         && m_viewTool != ViewTool::Zoom) {
         fitFrame();
@@ -525,6 +547,10 @@ void CustomGraphicsView::contextMenuEvent(QContextMenuEvent *event)
     event->accept();
 }
 
+// ---------------------------------------------------------------------------
+// 绘制 / 布局
+// ---------------------------------------------------------------------------
+
 void CustomGraphicsView::paintEvent(QPaintEvent *event)
 {
     QPainter paint(viewport());
@@ -547,6 +573,10 @@ void CustomGraphicsView::resizeEvent(QResizeEvent *event)
     }
     QGraphicsView::resizeEvent(event);
 }
+
+// ---------------------------------------------------------------------------
+// 视图工具 / 放大镜
+// ---------------------------------------------------------------------------
 
 void CustomGraphicsView::applyViewTool()
 {
@@ -639,6 +669,10 @@ void CustomGraphicsView::hideLoupe()
     }
 }
 
+// ---------------------------------------------------------------------------
+// 缩放 / 居中 / 背景
+// ---------------------------------------------------------------------------
+
 void CustomGraphicsView::onCenter()
 {
     if (!m_imageItem || m_image.isNull()) {
@@ -662,6 +696,7 @@ void CustomGraphicsView::fitFrame()
     if (width() < 1 || height() < 1 || m_image.width() < 1 || m_image.height() < 1) {
         return;
     }
+    // 取宽/高缩放比中较大者，保证整图完整落入视口（letterbox 效果）
     const double winWidth = width();
     const double winHeight = height();
     const double scaleWidth = (m_image.width() + 1.0) / winWidth;

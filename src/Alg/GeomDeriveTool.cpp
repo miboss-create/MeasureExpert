@@ -7,6 +7,7 @@ using namespace Me::ToolCommon;
 namespace Me {
 namespace {
 
+/** 按测量项 id 取前序结果；未跑过或 id 空则返回 nullptr */
 const MeasureResult *priorOf(const ToolContext &ctx, const QString &id)
 {
     if (id.isEmpty()) {
@@ -19,6 +20,10 @@ const MeasureResult *priorOf(const ToolContext &ctx, const QString &id)
     return &it.value();
 }
 
+/**
+ * 从任意测量结果尽量抽出一个代表点：
+ * 显式点 → 圆心 → 线段中点 → 所用卡尺边缘对中点 → 首个边缘点
+ */
 bool extractPoint(const MeasureResult &r, Point2D *out)
 {
     if (!out) {
@@ -63,12 +68,13 @@ bool extractLine(const MeasureResult &r, LineGeom *out)
     return true;
 }
 
+/** HALCON 法线式：|nr*row + nc*col - dist| */
 double pointLineDistance(const Point2D &p, const LineGeom &line)
 {
-    // HALCON: nr*row + nc*col - dist = 0
     return qAbs(line.nr * p.row + line.nc * p.col - line.dist);
 }
 
+/** 解两法线式直线交点；|det| 过小视为平行 */
 bool intersectLines(const LineGeom &a, const LineGeom &b, Point2D *out)
 {
     if (!out) {
@@ -85,9 +91,10 @@ bool intersectLines(const LineGeom &a, const LineGeom &b, Point2D *out)
     return qIsFinite(out->row) && qIsFinite(out->col);
 }
 
+/** 两线方向夹角，折到 [0, 90] 度 */
 double lineAngleDeg(const LineGeom &a, const LineGeom &b)
 {
-    // 方向向量垂直于法向
+    // 方向向量垂直于法向 (nr, nc)
     const double ax = -a.nc;
     const double ay = a.nr;
     const double bx = -b.nc;
