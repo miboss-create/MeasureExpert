@@ -96,6 +96,8 @@ qt_add_executable(MeasureExpert
     src/Alg/GeomDeriveTool.h
     src/Alg/AlignmentService.cpp
     src/Alg/AlignmentService.h
+    src/Alg/CameraCalibration.cpp
+    src/Alg/CameraCalibration.h
     src/Alg/MeasureService.cpp
     src/Alg/MeasureService.h
     src/Alg/ToleranceService.cpp

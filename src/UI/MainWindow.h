@@ -47,7 +47,7 @@ protected:
     void keyPressEvent(QKeyEvent *event) override;
 
 private slots:
-    // ---- 工程文件 ----
+    // ---- 工程（菜单「工程」）----
     void onNewProject();
     void onOpenProject();
     void onSaveProject();

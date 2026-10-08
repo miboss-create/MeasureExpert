@@ -481,30 +481,29 @@ bool MainWindow::initWidget()
 
 void MainWindow::createMenus()
 {
-    auto *fileMenu = menuBar()->addMenu(tr("文件(&F)"));
-    fileMenu->addAction(tr("新建工程"), this, &MainWindow::onNewProject);
-    fileMenu->addAction(tr("打开工程..."), this, &MainWindow::onOpenProject);
-    fileMenu->addAction(tr("保存工程"), this, &MainWindow::onSaveProject);
-    fileMenu->addAction(tr("工程另存为..."), this, &MainWindow::onSaveProjectAs);
-    fileMenu->addSeparator();
-    fileMenu->addAction(tr("加载图像..."), this, &MainWindow::onLoadImage);
-    fileMenu->addAction(tr("加载图像文件夹..."), this, &MainWindow::onLoadFolder);
-    fileMenu->addSeparator();
-    fileMenu->addAction(tr("退出"), this, &QWidget::close);
+    // 工程：仅工程文件生命周期（与采集取图隔离）
+    auto *projectMenu = menuBar()->addMenu(tr("工程(&P)"));
+    projectMenu->addAction(tr("新建工程"), this, &MainWindow::onNewProject);
+    projectMenu->addAction(tr("打开工程..."), this, &MainWindow::onOpenProject);
+    projectMenu->addAction(tr("保存工程"), this, &MainWindow::onSaveProject);
+    projectMenu->addAction(tr("工程另存为..."), this, &MainWindow::onSaveProjectAs);
+    projectMenu->addSeparator();
+    projectMenu->addAction(tr("退出"), this, &QWidget::close);
 
+    // 采集：图像源（单张/文件夹）；翻页用竖条缩略图，相机入口后续加在此菜单
     auto *acqMenu = menuBar()->addMenu(tr("采集(&A)"));
     acqMenu->addAction(tr("加载图像..."), this, &MainWindow::onLoadImage);
     acqMenu->addAction(tr("加载图像文件夹..."), this, &MainWindow::onLoadFolder);
-    acqMenu->addSeparator();
-    acqMenu->addAction(tr("上一张"), m_sourceThumbs, &ThumbnailStrip::selectPrevious);
-    acqMenu->addAction(tr("下一张"), m_sourceThumbs, &ThumbnailStrip::selectNext);
 
-    auto *recipeMenu = menuBar()->addMenu(tr("配方(&P)"));
+    // 配方：测量配方管理（与工程文件、取图、试跑分离）
+    auto *recipeMenu = menuBar()->addMenu(tr("配方(&F)"));
     m_manageRecipesAction = recipeMenu->addAction(tr("管理配方..."), this, &MainWindow::onManageRecipes);
 
+    // 标定：像素当量 / 棋盘格（与运行/配方隔离）
     auto *calMenu = menuBar()->addMenu(tr("标定(&C)"));
-    calMenu->addAction(tr("像素当量..."), this, &MainWindow::onCalibration);
+    calMenu->addAction(tr("标定..."), this, &MainWindow::onCalibration);
 
+    // 运行：编辑期配置 + 试跑/连续（按分隔线区分）
     auto *runMenu = menuBar()->addMenu(tr("运行(&R)"));
     m_trainAlignAction = runMenu->addAction(tr("创建定位模板..."), this, &MainWindow::onTrainAlignment);
     m_drawMeasureRoiAction = runMenu->addAction(tr("画卡尺ROI..."), this, &MainWindow::onDrawMeasureRoi);
@@ -518,9 +517,6 @@ void MainWindow::createMenus()
     m_stopAction->setEnabled(false);
     runMenu->addSeparator();
     m_modeToggleAction = runMenu->addAction(tr("切换到运行模式"), this, &MainWindow::onToggleEditRunMode);
-
-    menuBar()->addMenu(tr("工具(&T)"));
-    menuBar()->addMenu(tr("帮助(&H)"));
 }
 
 void MainWindow::createToolBar()
@@ -966,14 +962,49 @@ void MainWindow::onLoadFolder()
 void MainWindow::onCalibration()
 {
     CalibrationDialog dlg(m_projectService->project().calibration, this);
+    connect(&dlg,
+            &CalibrationDialog::previewRequested,
+            this,
+            [this](const QImage &image, const QString &caption) {
+                if (!image.isNull()) {
+                    m_imageView->setImage(image);
+                }
+                if (!caption.isEmpty()) {
+                    statusBar()->showMessage(caption, 8000);
+                }
+            });
+    connect(&dlg,
+            &CalibrationDialog::calibrationVisualsReady,
+            this,
+            [this](const QStringList &labels, const QVector<QImage> &images) {
+                if (!m_sourceThumbs->loadImages(labels, images)) {
+                    qWarning().noquote() << tr("标定可视化结果未载入缩略图");
+                    return;
+                }
+                // 若含畸变对比项，默认选中最后一张（对比图）
+                if (!labels.isEmpty()
+                    && labels.last().contains(QStringLiteral("畸变矫正对比"))) {
+                    m_sourceThumbs->setCurrentIndex(m_sourceThumbs->count() - 1);
+                }
+                qInfo().noquote() << tr("标定可视化已载入列表（%1 张）")
+                                         .arg(m_sourceThumbs->count());
+                statusBar()->showMessage(
+                    tr("左侧列表：角点结果 + 畸变矫正对比，点选可查看"),
+                    8000);
+            });
+
     if (dlg.exec() != QDialog::Accepted) {
         return;
     }
+
     m_projectService->setCalibration(dlg.result());
     updateCalibrationStatus();
     qInfo().noquote() << tr("已更新标定: calibrated=%1 pixelSizeMm=%2")
                              .arg(m_projectService->project().calibration.calibrated)
                              .arg(m_projectService->project().calibration.pixelSizeMm);
+    statusBar()->showMessage(
+        tr("标定已写入工程；可在左侧列表点选标定图查看，主图当前为标定预览"),
+        10000);
 }
 
 // ---- 定位模板训练（二次点击：进入 ROI → 确认训练） ----

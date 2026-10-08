@@ -3,7 +3,6 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QImage>
 #include <QImageReader>
 #include <QListWidget>
 #include <QScrollBar>
@@ -67,7 +66,6 @@ bool ThumbnailStrip::initWidget()
     return true;
 }
 
-/** 支持的图像扩展名（与 QImageReader 可读格式对齐） */
 QStringList ThumbnailStrip::imageNameFilters()
 {
     return {QStringLiteral("*.png"),
@@ -84,6 +82,7 @@ void ThumbnailStrip::clear()
 {
     m_list->clear();
     m_paths.clear();
+    m_images.clear();
     m_folderPath.clear();
 }
 
@@ -133,9 +132,54 @@ void ThumbnailStrip::addImagePath(const QString &path)
     m_paths.push_back(path);
 }
 
-// ---------------------------------------------------------------------------
-// 文件夹加载 / 导航
-// ---------------------------------------------------------------------------
+void ThumbnailStrip::addCachedImage(const QString &label, const QImage &full)
+{
+    if (full.isNull()) {
+        return;
+    }
+
+    const QImage thumb = full.scaled(kThumbSize,
+                                     kThumbSize,
+                                     Qt::KeepAspectRatio,
+                                     Qt::SmoothTransformation);
+
+    auto *item = new QListWidgetItem(m_list);
+    item->setIcon(QIcon(QPixmap::fromImage(thumb)));
+    item->setToolTip(label);
+    if (m_orientation == Orientation::Vertical) {
+        item->setSizeHint(QSize(width() - 8, kThumbSize + 8));
+    } else {
+        item->setSizeHint(QSize(kThumbSize + 8, height() - 8));
+    }
+    item->setData(Qt::UserRole, label);
+
+    m_paths.push_back(label);
+    m_images.push_back(full);
+}
+
+bool ThumbnailStrip::loadImages(const QStringList &labels, const QVector<QImage> &images)
+{
+    if (labels.size() != images.size() || labels.isEmpty()) {
+        return false;
+    }
+
+    clear();
+    m_folderPath.clear();
+
+    for (int i = 0; i < labels.size(); ++i) {
+        if (images.at(i).isNull()) {
+            continue;
+        }
+        addCachedImage(labels.at(i), images.at(i));
+    }
+
+    if (m_paths.isEmpty()) {
+        return false;
+    }
+
+    m_list->setCurrentRow(0);
+    return true;
+}
 
 bool ThumbnailStrip::loadFolder(const QString &folderPath)
 {
@@ -219,8 +263,16 @@ void ThumbnailStrip::onCurrentRowChanged(int row)
         return;
     }
 
-    // 选中变更时再读原图，避免 loadFolder 时一次性占用大量内存
     const QString path = m_paths.at(row);
+
+    // 缓存模式：直接用可视化结果图
+    if (row < m_images.size() && !m_images.at(row).isNull()) {
+        emit currentIndexChanged(row);
+        emit currentPathChanged(path);
+        emit currentImageChanged(m_images.at(row));
+        return;
+    }
+
     QImageReader reader(path);
     reader.setAutoTransform(true);
     const QImage image = reader.read();

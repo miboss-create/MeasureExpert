@@ -1,17 +1,18 @@
 #ifndef THUMBNAILSTRIP_H
 #define THUMBNAILSTRIP_H
 
+#include <QImage>
 #include <QStringList>
+#include <QVector>
 #include <QWidget>
 
 class QListWidget;
-class QImage;
 
 /**
- * 缩略图条：文件夹内图像的快速浏览与点选
+ * 缩略图条：文件夹原图，或内存中的可视化图（如标定角点结果）
  *
- * 支持竖向/横向布局；选中项时读取原图并发出 currentImageChanged。
- * 缩略图固定 96×96 等比缩放，原图按需加载（非预加载全文件夹）。
+ * 支持竖向/横向布局；选中项发出 currentImageChanged。
+ * 缩略图固定 96×96 等比缩放。
  */
 class ThumbnailStrip : public QWidget
 {
@@ -26,20 +27,26 @@ public:
                             QWidget *parent = nullptr);
 
     void clear();
-    /** 扫描文件夹内常见图像格式，按文件名排序填充列表 */
+    /** 扫描文件夹内常见图像格式，按文件名排序填充列表（磁盘原图） */
     bool loadFolder(const QString &folderPath);
     bool openFolderDialog();
+
+    /**
+     * 用内存图像填充列表（如标定可视化结果）。
+     * labels 与 images 等长；点选时直接发出缓存图，不再读盘。
+     */
+    bool loadImages(const QStringList &labels, const QVector<QImage> &images);
 
     int count() const;
     int currentIndex() const;
     QString currentPath() const;
     QString folderPath() const { return m_folderPath; }
     Orientation orientation() const { return m_orientation; }
+    /** true：当前为 loadImages 缓存模式 */
+    bool hasCachedImages() const { return !m_images.isEmpty(); }
 
 public slots:
-    /** 循环选择下一项（末项回绕到首项） */
     void selectNext();
-    /** 循环选择上一项 */
     void selectPrevious();
     void setCurrentIndex(int index);
 
@@ -54,11 +61,13 @@ private slots:
 private:
     bool initWidget();
     void addImagePath(const QString &path);
+    void addCachedImage(const QString &label, const QImage &full);
     static QStringList imageNameFilters();
 
     Orientation m_orientation = Orientation::Vertical;
     QListWidget *m_list = nullptr;
-    QStringList m_paths;       ///< 与列表行号一一对应的全路径
+    QStringList m_paths;     ///< 磁盘路径，或缓存模式下的显示名
+    QVector<QImage> m_images; ///< 非空则点选用缓存图
     QString m_folderPath;
 };
 

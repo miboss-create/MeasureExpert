@@ -16,7 +16,7 @@ namespace Me {
  *
  * 算法概要：沿圆周布径向卡尺 → MeasurePos 取最强边缘 → FitCircleContourXld
  * 输出：拟合圆心/半径；测量值 = 半径（px 或标定后单位）
- * 判定：走名义公差（非“找到即 OK”）
+ * 判定：ToleranceService 中作为中间几何「找到即 OK」（半径仅展示）
  */
 class FindCircleTool : public IMeasureTool
 {
