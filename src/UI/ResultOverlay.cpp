@@ -178,7 +178,8 @@ QImage ResultOverlay::render(const QImage &source, const CycleResult &result)
         p.setBrush(QColor(0, 200, 255, 160));
         p.drawEllipse(origin, 5, 5);
         const double a = result.alignment.angleRad;
-        p.drawLine(origin, origin + QPointF(50 * qCos(a), 50 * qSin(a)));
+        // HALCON 角：从 +column 逆时针 → 图像 (x,y) 为 (cos, -sin)
+        p.drawLine(origin, origin + QPointF(50.0 * qCos(a), -50.0 * qSin(a)));
     }
 
     // --- 各测量项几何 ---

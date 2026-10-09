@@ -8,11 +8,10 @@ namespace Me {
 /**
  * 找线工具（FindLine）
  *
- * 几何含义：矩形卡尺（中心 row/col、朝向 phi、半长 length1、半宽 length2）
- *
- * 算法概要：沿卡尺两个正交方向多点采样边缘 → FitLineContourXld
- * 输出：拟合直线端点/法向；测量值 = 拟合线段长度
- * 判定：ToleranceService 中作为中间几何「找到即 OK」
+ * 几何：定向矩形卡尺（中心、phi、length1=搜索半长、length2=沿线半宽）
+ * 流程：定位 HomMat 把卡尺放到当前图同位置 → 沿线 MeasurePos → FitLineContourXld
+ * 输出：拟合直线；测量值 = 拟合线段长度
+ * 判定：ToleranceService 中「找到即 OK」
  */
 class FindLineTool : public IMeasureTool
 {

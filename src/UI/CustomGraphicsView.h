@@ -105,6 +105,8 @@ private:
     /** 进入绘制态：禁画布拖拽 */
     void enterRoiDrawing();
     void deleteRoiFromMenu();
+    /** 保存当前显示图（含叠加结果） */
+    void saveDisplayedImage();
     /** 根据当前 ViewTool 设置 DragMode / 光标；ROI 绘制态优先 */
     void applyViewTool();
     /** 以鼠标为中心绘制局部放大窗（视口坐标） */

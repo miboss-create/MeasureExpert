@@ -9,48 +9,40 @@ namespace Me {
 namespace {
 
 /**
- * 沿卡尺某一方向等距布细卡尺，每条 MeasurePos 只取最强边缘点。
+ * 在定向卡尺内沿线布细测条，MeasurePos 取每条最强边缘点。
  *
- * 为何不用单条 gen_measure_rectangle2 + measure_pos：
- *   单次剖面在一条明显边缘上通常只得到 1 个点，无法拟合直线。
- *
- * @param rowC/colC   卡尺中心
- * @param phi         该组细卡尺的朝向（搜索方向）
- * @param halfSearch  沿 phi 的半搜索长（Measure 的 length1）
- * @param halfAlong   垂直于 phi 的半跨度，用于决定采样条数与间距
- * @param threshold   边缘幅度阈值
+ * geometry：phi / length1 = 搜索方向半长；length2 = 垂直半宽（沿线跨度）。
+ * 中心与 phi 已由 resolveImageCaliper 变到当前图（含定位跟随）。
  */
-QVector<Point2D> sampleEdgesAlong(const HalconCpp::HImage &gray,
+QVector<Point2D> sampleEdgePoints(const HalconCpp::HImage &gray,
                                   Hlong width,
                                   Hlong height,
                                   double rowC,
                                   double colC,
                                   double phi,
-                                  double halfSearch,
-                                  double halfAlong,
+                                  double length1,
+                                  double length2,
                                   double threshold)
 {
     QVector<Point2D> pts;
-    if (halfSearch < 1.0 || halfAlong < 1.0) {
+    if (length1 < 1.0 || length2 < 1.0) {
         return pts;
     }
 
-    // 约每 6px 一条，限制在 [5, 31]
-    const int samples = qBound(5, static_cast<int>((halfAlong * 2.0) / 6.0), 31);
-    const double step = (2.0 * halfAlong) / static_cast<double>(samples - 1);
-    // 细卡尺的 length2：略小于半步长，减少相邻剖面互相干扰
+    const int samples = qBound(5, static_cast<int>((length2 * 2.0) / 6.0), 31);
+    const double step = (2.0 * length2) / static_cast<double>(samples - 1);
     const double subL2 = qBound(1.0, step * 0.45, 6.0);
-    // 沿垂直于 phi 的方向平移中心：HALCON phi 的法向为 (cos, -sin) 在 row/col 下
+    // 第二主轴（沿线）：(drow, dcol) = (cos φ, -sin φ)
     const double s = qSin(phi);
     const double c = qCos(phi);
 
     for (int i = 0; i < samples; ++i) {
-        const double t = -halfAlong + i * step;
+        const double t = -length2 + i * step;
         const double row = rowC + t * c;
         const double col = colC - t * s;
         HTuple handle;
         try {
-            GenMeasureRectangle2(row, col, phi, halfSearch, subL2,
+            GenMeasureRectangle2(row, col, phi, length1, subL2,
                                  width, height, "bilinear", &handle);
             HTuple rowEdge, colEdge, amplitude, distance;
             MeasurePos(gray, handle, 1.0, threshold, "all", "all",
@@ -90,6 +82,60 @@ QVector<Point2D> sampleEdgesAlong(const HalconCpp::HImage &gray,
     return pts;
 }
 
+bool fitLine(const QVector<Point2D> &pts, LineGeom *lineOut)
+{
+    if (!lineOut || pts.size() < 2) {
+        return false;
+    }
+    try {
+        HTuple rows;
+        HTuple cols;
+        for (const Point2D &p : pts) {
+            rows.Append(p.row);
+            cols.Append(p.col);
+        }
+
+        HXLDCont contour;
+        contour.GenContourPolygonXld(rows, cols);
+
+        HTuple rowBegin, colBegin, rowEnd, colEnd, nr, nc, dist;
+        contour.FitLineContourXld("tukey",
+                                  -1,
+                                  0,
+                                  5,
+                                  2,
+                                  &rowBegin,
+                                  &colBegin,
+                                  &rowEnd,
+                                  &colEnd,
+                                  &nr,
+                                  &nc,
+                                  &dist);
+
+        if (rowBegin.Length() < 1 || colBegin.Length() < 1
+            || rowEnd.Length() < 1 || colEnd.Length() < 1
+            || nr.Length() < 1 || nc.Length() < 1 || dist.Length() < 1) {
+            return false;
+        }
+
+        lineOut->valid = true;
+        lineOut->rowBegin = rowBegin[0].D();
+        lineOut->colBegin = colBegin[0].D();
+        lineOut->rowEnd = rowEnd[0].D();
+        lineOut->colEnd = colEnd[0].D();
+        lineOut->nr = nr[0].D();
+        lineOut->nc = nc[0].D();
+        lineOut->dist = dist[0].D();
+        return qIsFinite(lineOut->rowBegin) && qIsFinite(lineOut->colBegin)
+            && qIsFinite(lineOut->rowEnd) && qIsFinite(lineOut->colEnd)
+            && qIsFinite(lineOut->nr) && qIsFinite(lineOut->nc)
+            && qIsFinite(lineOut->dist);
+    } catch (...) {
+        *lineOut = {};
+        return false;
+    }
+}
+
 } // namespace
 
 MeasureResult FindLineTool::run(const MeasureItem &item, const ToolContext &ctx) const
@@ -109,7 +155,7 @@ MeasureResult FindLineTool::run(const MeasureItem &item, const ToolContext &ctx)
         Hlong height = 0;
         gray.GetImageSize(&width, &height);
 
-        // 可选定位跟随：有模板时 ROI 相对模板，运行时仿射到当前图
+        // 1) 定位模板 → 当前图同位置卡尺
         double rowImg = 0.0;
         double colImg = 0.0;
         double phiImg = 0.0;
@@ -122,15 +168,10 @@ MeasureResult FindLineTool::run(const MeasureItem &item, const ToolContext &ctx)
             return failResult(item, QStringLiteral("卡尺坐标非有限值"));
         }
 
-        // 用户画的矩形：不知道长边还是短边横跨边缘，两个正交方向都采，取点数更多的一侧
-        // alongPhi：phi 为搜索向，length1 为半搜索，length2 为沿线半跨度
-        const QVector<Point2D> alongPhi = sampleEdgesAlong(
+        // 2) 卡尺内采边缘点 → 拟合直线
+        const QVector<Point2D> edgePts = sampleEdgePoints(
             gray, width, height, rowImg, colImg, phiImg,
             item.geometry.length1, item.geometry.length2, 10.0);
-        // acrossPhi：旋转 90°，交换 length1/length2 角色
-        const QVector<Point2D> acrossPhi = sampleEdgesAlong(
-            gray, width, height, rowImg, colImg, phiImg + 1.5707963267948966,
-            item.geometry.length2, item.geometry.length1, 10.0);
 
         MeasureResult result = baseResult(item);
         result.imageRow = rowImg;
@@ -138,80 +179,27 @@ MeasureResult FindLineTool::run(const MeasureItem &item, const ToolContext &ctx)
         result.imagePhi = phiImg;
         result.length1 = item.geometry.length1;
         result.length2 = item.geometry.length2;
-        result.firstEdges = alongPhi.size() >= acrossPhi.size() ? alongPhi : acrossPhi;
+        result.firstEdges = edgePts;
 
-        if (result.firstEdges.size() < 2) {
+        LineGeom line;
+        if (!fitLine(edgePts, &line)) {
             result.measured = false;
             result.ok = false;
             result.message = QStringLiteral("边缘点不足（%1），无法拟合直线")
-                                 .arg(result.firstEdges.size());
+                                 .arg(edgePts.size());
             return result;
         }
 
-        // 用过滤后的有限点建 XLD；regression 对少点/噪声更稳
-        HTuple rows;
-        HTuple cols;
-        for (const Point2D &p : result.firstEdges) {
-            rows.Append(p.row);
-            cols.Append(p.col);
-        }
-
-        HXLDCont contour;
-        contour.GenContourPolygonXld(rows, cols);
-
-        HTuple rowBegin, colBegin, rowEnd, colEnd, nr, nc, dist;
-        contour.FitLineContourXld("regression",
-                                  -1,
-                                  0,
-                                  5,
-                                  2,
-                                  &rowBegin,
-                                  &colBegin,
-                                  &rowEnd,
-                                  &colEnd,
-                                  &nr,
-                                  &nc,
-                                  &dist);
-
-        if (rowBegin.Length() < 1 || colBegin.Length() < 1
-            || rowEnd.Length() < 1 || colEnd.Length() < 1
-            || nr.Length() < 1 || nc.Length() < 1 || dist.Length() < 1) {
-            result.measured = false;
-            result.ok = false;
-            result.message = QStringLiteral("直线拟合失败");
-            return result;
-        }
-
-        // HALCON 直线：nr*row + nc*col = dist（法线式）
-        result.line.valid = true;
-        result.line.rowBegin = rowBegin[0].D();
-        result.line.colBegin = colBegin[0].D();
-        result.line.rowEnd = rowEnd[0].D();
-        result.line.colEnd = colEnd[0].D();
-        result.line.nr = nr[0].D();
-        result.line.nc = nc[0].D();
-        result.line.dist = dist[0].D();
-        if (!qIsFinite(result.line.rowBegin) || !qIsFinite(result.line.colBegin)
-            || !qIsFinite(result.line.rowEnd) || !qIsFinite(result.line.colEnd)
-            || !qIsFinite(result.line.nr) || !qIsFinite(result.line.nc)
-            || !qIsFinite(result.line.dist)) {
-            result.line = {};
-            result.measured = false;
-            result.ok = false;
-            result.message = QStringLiteral("直线拟合结果无效");
-            return result;
-        }
-
-        // 测量值取拟合线段两端点的欧氏长度（供显示；OK/NG 不依赖此值）
-        const double dr = result.line.rowEnd - result.line.rowBegin;
-        const double dc = result.line.colEnd - result.line.colBegin;
+        result.line = line;
+        const double dr = line.rowEnd - line.rowBegin;
+        const double dc = line.colEnd - line.colBegin;
         const double lenPx = qSqrt(dr * dr + dc * dc);
 
         QString unit;
         result.value = applyCalibration(lenPx, ctx.calibration, &unit);
         result.unit = unit;
         result.measured = true;
-        result.message = QStringLiteral("找线完成（%1 点）").arg(result.firstEdges.size());
+        result.message = QStringLiteral("找线完成（%1 点）").arg(edgePts.size());
         return result;
     } catch (HException &ex) {
         return failResult(item, fromHException(ex));

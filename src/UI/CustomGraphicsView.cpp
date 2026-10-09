@@ -5,13 +5,19 @@
 
 #include <QButtonGroup>
 #include <QContextMenuEvent>
+#include <QDateTime>
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QGraphicsScene>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QResizeEvent>
+#include <QStandardPaths>
 #include <QToolButton>
 #include <QWheelEvent>
 
@@ -534,35 +540,76 @@ void CustomGraphicsView::mouseReleaseEvent(QMouseEvent *event)
     QGraphicsView::mouseReleaseEvent(event);
 }
 
-void CustomGraphicsView::contextMenuEvent(QContextMenuEvent *event)
+void CustomGraphicsView::saveDisplayedImage()
 {
-    if (!m_roiEditEnabled) {
-        event->ignore();
+    if (m_qImage.isNull()) {
+        QMessageBox::information(this, tr("保存图片"), tr("当前没有可保存的图像。"));
         return;
     }
 
-    // 绘制态右键 = 确认（类 HALCON），不弹菜单
-    if (m_roiDrawing) {
+    const QString defaultDir =
+        QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+    const QString defaultName =
+        QStringLiteral("MeasureExpert_%1.png")
+            .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss")));
+    const QString path = QFileDialog::getSaveFileName(
+        this,
+        tr("保存图片"),
+        QDir(defaultDir).filePath(defaultName),
+        tr("PNG 图像 (*.png);;JPEG 图像 (*.jpg *.jpeg);;BMP 图像 (*.bmp);;所有文件 (*.*)"));
+    if (path.isEmpty()) {
+        return;
+    }
+
+    if (!m_qImage.save(path)) {
+        QMessageBox::warning(this, tr("保存失败"), tr("无法写入文件：\n%1").arg(path));
+        return;
+    }
+    if (m_posInfoLabel) {
+        m_posInfoLabel->setText(tr("已保存: %1").arg(QFileInfo(path).fileName()));
+    }
+}
+
+void CustomGraphicsView::contextMenuEvent(QContextMenuEvent *event)
+{
+    // ROI 绘制态右键 = 确认（类 HALCON），不弹菜单
+    if (m_roiEditEnabled && m_roiDrawing) {
         finishRoiDrawing();
         event->accept();
         return;
     }
 
-    const QPointF scenePos = mapToScene(event->pos());
-    if (!hitRoi(scenePos) || !hasRoi()) {
+    QMenu menu(this);
+    QAction *saveImg = nullptr;
+    if (!m_qImage.isNull()) {
+        saveImg = menu.addAction(tr("保存图片..."));
+    }
+
+    QAction *del = nullptr;
+    QAction *redraw = nullptr;
+    if (m_roiEditEnabled) {
+        const QPointF scenePos = mapToScene(event->pos());
+        if (hitRoi(scenePos) && hasRoi()) {
+            if (m_roiItem) {
+                m_roiItem->setSelected(true);
+            }
+            if (saveImg) {
+                menu.addSeparator();
+            }
+            del = menu.addAction(tr("删除 ROI"));
+            redraw = menu.addAction(tr("重新绘制 ROI"));
+        }
+    }
+
+    if (menu.actions().isEmpty()) {
         event->ignore();
         return;
     }
 
-    if (m_roiItem) {
-        m_roiItem->setSelected(true);
-    }
-
-    QMenu menu(this);
-    QAction *del = menu.addAction(tr("删除 ROI"));
-    QAction *redraw = menu.addAction(tr("重新绘制 ROI"));
     QAction *chosen = menu.exec(event->globalPos());
-    if (chosen == del) {
+    if (chosen == saveImg) {
+        saveDisplayedImage();
+    } else if (chosen == del) {
         deleteRoiFromMenu();
     } else if (chosen == redraw) {
         clearRoi();

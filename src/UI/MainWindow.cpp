@@ -14,6 +14,7 @@
 
 #include "Alg/AlignmentService.h"
 #include "Alg/RunEngine.h"
+#include "Alg/ToolCommon.h"
 #include "Core/CameraHub.h"
 #include "Core/CsvResultStore.h"
 #include "Core/ProjectService.h"
@@ -292,11 +293,15 @@ bool MainWindow::measureGeometryToImageRoi(const Me::CaliperGeometry &geo,
     double colImg = geo.column;
     double phiImg = geo.phi;
     if (align.ok) {
-        const double cA = qCos(align.angleRad);
-        const double sA = qSin(align.angleRad);
-        rowImg = cA * geo.row - sA * geo.column + align.row;
-        colImg = sA * geo.row + cA * geo.column + align.column;
-        phiImg = align.angleRad + geo.phi;
+        if (!Me::ToolCommon::affineCaliper(align.homMat2D,
+                                           geo.row,
+                                           geo.column,
+                                           geo.phi,
+                                           &rowImg,
+                                           &colImg,
+                                           &phiImg)) {
+            return false;
+        }
     }
 
     *centerOut = QPointF(colImg, rowImg);
@@ -328,14 +333,25 @@ bool MainWindow::imageRoiToMeasureGeometry(const QPointF &centerImg,
     const double colImg = centerImg.x();
 
     if (align.ok) {
-        const double cA = qCos(align.angleRad);
-        const double sA = qSin(align.angleRad);
-        const double dRow = rowImg - align.row;
-        const double dCol = colImg - align.column;
-        // 相对模板坐标，运行时再仿射跟随
-        out->row = cA * dRow + sA * dCol;
-        out->column = -sA * dRow + cA * dCol;
-        out->phi = phiImg - align.angleRad;
+        try {
+            HalconCpp::HTuple invT;
+            HomMat2dInvert(Me::ToolCommon::homTuple6(align.homMat2D), &invT);
+            double inv6[6] = {1, 0, 0, 0, 1, 0};
+            for (int i = 0; i < 6 && i < invT.Length(); ++i) {
+                inv6[i] = invT[i].D();
+            }
+            if (!Me::ToolCommon::affineCaliper(inv6,
+                                               rowImg,
+                                               colImg,
+                                               phiImg,
+                                               &out->row,
+                                               &out->column,
+                                               &out->phi)) {
+                return false;
+            }
+        } catch (...) {
+            return false;
+        }
     } else {
         out->row = rowImg;
         out->column = colImg;
