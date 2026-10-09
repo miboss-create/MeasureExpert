@@ -14,9 +14,11 @@
 
 #include "Alg/AlignmentService.h"
 #include "Alg/RunEngine.h"
+#include "Core/CameraHub.h"
 #include "Core/CsvResultStore.h"
 #include "Core/ProjectService.h"
 #include "CustomImageView.h"
+#include "UI/CameraConnectDialog.h"
 #include "LogWidget.h"
 #include "ThumbnailStrip.h"
 #include "UI/CalibrationDialog.h"
@@ -62,6 +64,8 @@
 #include <QtMath>
 
 using Me::CalibrationDialog;
+using Me::CameraConnectDialog;
+using Me::CameraHub;
 using Me::EditMeasureDialog;
 using Me::MeasureType;
 using Me::ProjectService;
@@ -91,11 +95,21 @@ MainWindow::MainWindow(QWidget *parent)
         return;
     }
 
+    m_cameraHub = new CameraHub(this);
+    connect(m_cameraHub, &CameraHub::frameReady, this, &MainWindow::onCameraFrameReady);
+    connect(m_cameraHub, &CameraHub::openedChanged, this, &MainWindow::onCameraOpenedChanged);
+    connect(m_cameraHub, &CameraHub::previewChanged, this, &MainWindow::onCameraPreviewChanged);
+    connect(m_cameraHub, &CameraHub::errorOccurred, this, [this](const QString &msg) {
+        qWarning().noquote() << tr("相机: %1").arg(msg);
+        statusBar()->showMessage(tr("相机: %1").arg(msg), 5000);
+    });
+
     createMenus();
     createToolBar();
     createStatusBar();
     setupRunEngine();
     applyAppModeUi();
+    updateCameraActionsUi();
     refreshRecipeList();
     refreshMeasureList();
 
@@ -119,6 +133,9 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
+    if (m_cameraHub) {
+        m_cameraHub->shutdown();
+    }
     shutdownRunEngine();
 }
 
@@ -132,6 +149,11 @@ void MainWindow::closeEvent(QCloseEvent *event)
     if (!maybeSaveBeforeContinue()) {
         event->ignore();
         return;
+    }
+    // 必须在窗口/Qt 析构前释放相机：预览定时器 + VideoCapture 留到 ~QObject 易异常
+    if (m_cameraHub) {
+        disconnect(m_cameraHub, nullptr, this, nullptr);
+        m_cameraHub->shutdown();
     }
     event->accept();
 }
@@ -335,6 +357,7 @@ void MainWindow::shutdownRunEngine()
     RunEngine *engine = m_runEngine;
     QThread *thread = m_runThread;
     m_runEngine = nullptr;
+    m_runThread = nullptr;
 
     if (engine) {
         disconnect(engine, nullptr, this, nullptr);
@@ -346,7 +369,7 @@ void MainWindow::shutdownRunEngine()
     }
     if (thread && thread->isRunning()) {
         thread->quit();
-        thread->wait(3000);
+        thread->wait(5000);
     }
 }
 
@@ -490,10 +513,15 @@ void MainWindow::createMenus()
     projectMenu->addSeparator();
     projectMenu->addAction(tr("退出"), this, &QWidget::close);
 
-    // 采集：图像源（单张/文件夹）；翻页用竖条缩略图，相机入口后续加在此菜单
+    // 采集：文件夹离线源 + 物理相机（算法仍走 RunEngine，不在采集回调里测）
     auto *acqMenu = menuBar()->addMenu(tr("采集(&A)"));
     acqMenu->addAction(tr("加载图像..."), this, &MainWindow::onLoadImage);
     acqMenu->addAction(tr("加载图像文件夹..."), this, &MainWindow::onLoadFolder);
+    acqMenu->addSeparator();
+    m_connectCameraAction = acqMenu->addAction(tr("连接相机..."), this, &MainWindow::onConnectCamera);
+    m_grabCameraAction = acqMenu->addAction(tr("采集一帧"), this, &MainWindow::onGrabCameraFrame);
+    m_previewCameraAction = acqMenu->addAction(tr("开始预览"), this, &MainWindow::onToggleCameraPreview);
+    m_disconnectCameraAction = acqMenu->addAction(tr("断开相机"), this, &MainWindow::onDisconnectCamera);
 
     // 配方：测量配方管理（与工程文件、取图、试跑分离）
     auto *recipeMenu = menuBar()->addMenu(tr("配方(&F)"));
@@ -656,6 +684,7 @@ void MainWindow::applyAppModeUi()
         m_modeToggleAction->setEnabled(!m_busy && !m_continuous);
         m_modeToggleAction->setText(edit ? tr("切换到运行模式") : tr("切换到编辑模式"));
     }
+    updateCameraActionsUi();
 }
 
 // ---- 列表刷新与属性面板 ----
@@ -955,6 +984,166 @@ void MainWindow::onLoadFolder()
     qInfo().noquote() << tr("已加载文件夹: %1（%2 张）")
                              .arg(m_sourceThumbs->folderPath())
                              .arg(m_sourceThumbs->count());
+}
+
+// ---- 物理相机 ----
+
+void MainWindow::applyCameraFrame(const QImage &image, bool fromPreview)
+{
+    if (image.isNull()) {
+        return;
+    }
+    m_currentImage = image;
+    m_imageView->setImage(image);
+    const QString name = m_cameraHub && m_cameraHub->isOpen()
+        ? m_cameraHub->currentDevice().displayName
+        : tr("相机");
+    m_currentImagePath = fromPreview
+        ? QStringLiteral("camera://%1/preview").arg(name)
+        : QStringLiteral("camera://%1/frame").arg(name);
+    updateImageSourceStatus(tr("相机 · %1").arg(name));
+}
+
+bool MainWindow::grabCameraFrameToCurrent(QString *error)
+{
+    if (!m_cameraHub || !m_cameraHub->isOpen()) {
+        if (error) {
+            *error = tr("相机未连接");
+        }
+        return false;
+    }
+    // 采测量帧时暂停预览，避免与 grab 抢同一设备
+    const bool wasPreview = m_cameraHub->isPreviewing();
+    if (wasPreview) {
+        m_cameraHub->stopPreview();
+    }
+    QImage frame;
+    QString err;
+    const bool ok = m_cameraHub->grabOnce(&frame, &err);
+    if (!ok) {
+        if (error) {
+            *error = err;
+        }
+        if (wasPreview) {
+            m_cameraHub->startPreview();
+        }
+        return false;
+    }
+    applyCameraFrame(frame, false);
+    return true;
+}
+
+void MainWindow::updateCameraActionsUi()
+{
+    const bool open = m_cameraHub && m_cameraHub->isOpen();
+    const bool preview = open && m_cameraHub->isPreviewing();
+    const bool idle = !m_busy && !m_continuous;
+    if (m_connectCameraAction) {
+        m_connectCameraAction->setEnabled(idle);
+    }
+    if (m_grabCameraAction) {
+        m_grabCameraAction->setEnabled(open && idle);
+    }
+    if (m_previewCameraAction) {
+        m_previewCameraAction->setEnabled(open && idle);
+        m_previewCameraAction->setText(preview ? tr("停止预览") : tr("开始预览"));
+    }
+    if (m_disconnectCameraAction) {
+        m_disconnectCameraAction->setEnabled(open && idle);
+    }
+}
+
+void MainWindow::onConnectCamera()
+{
+    if (!m_cameraHub || m_busy || m_continuous) {
+        return;
+    }
+    CameraConnectDialog dlg(m_cameraHub, this);
+    if (dlg.exec() != QDialog::Accepted) {
+        return;
+    }
+    const auto device = dlg.selectedDevice();
+    if (device.deviceId.isEmpty()) {
+        return;
+    }
+    QString err;
+    if (!m_cameraHub->openDevice(device, &err)) {
+        QMessageBox::warning(this, tr("连接失败"), err);
+        return;
+    }
+    m_projectService->setImageSourceCamera(device.backendId, device.deviceId, device.displayName);
+    updateWindowTitle();
+    qInfo().noquote() << tr("已连接相机: %1 (%2/%3)")
+                             .arg(device.displayName, device.backendId, device.deviceId);
+
+    QString grabErr;
+    if (grabCameraFrameToCurrent(&grabErr)) {
+        statusBar()->showMessage(tr("相机已连接并采得一帧"), 5000);
+    } else {
+        statusBar()->showMessage(tr("相机已连接，但首帧失败: %1").arg(grabErr), 8000);
+    }
+    updateCameraActionsUi();
+}
+
+void MainWindow::onGrabCameraFrame()
+{
+    if (m_busy || m_continuous) {
+        return;
+    }
+    QString err;
+    if (!grabCameraFrameToCurrent(&err)) {
+        QMessageBox::warning(this, tr("采图失败"), err);
+        return;
+    }
+    qInfo().noquote() << tr("已采集一帧 (%1×%2)")
+                             .arg(m_currentImage.width())
+                             .arg(m_currentImage.height());
+    statusBar()->showMessage(tr("已采集一帧，可单次试跑"), 4000);
+    updateCameraActionsUi();
+}
+
+void MainWindow::onToggleCameraPreview()
+{
+    if (!m_cameraHub || !m_cameraHub->isOpen() || m_busy || m_continuous) {
+        return;
+    }
+    if (m_cameraHub->isPreviewing()) {
+        m_cameraHub->stopPreview();
+        qInfo().noquote() << tr("已停止相机预览");
+    } else {
+        m_cameraHub->startPreview();
+        qInfo().noquote() << tr("已开始相机预览");
+    }
+    updateCameraActionsUi();
+}
+
+void MainWindow::onDisconnectCamera()
+{
+    if (!m_cameraHub) {
+        return;
+    }
+    m_cameraHub->closeDevice();
+    qInfo().noquote() << tr("已断开相机");
+    statusBar()->showMessage(tr("已断开相机"), 3000);
+    updateCameraActionsUi();
+}
+
+void MainWindow::onCameraFrameReady(const QImage &image)
+{
+    // 预览帧：只更新显示与当前图，不跑算法
+    applyCameraFrame(image, true);
+}
+
+void MainWindow::onCameraOpenedChanged(bool open)
+{
+    Q_UNUSED(open);
+    updateCameraActionsUi();
+}
+
+void MainWindow::onCameraPreviewChanged(bool on)
+{
+    Q_UNUSED(on);
+    updateCameraActionsUi();
 }
 
 // ---- 标定 ----
@@ -1359,16 +1548,28 @@ void MainWindow::onContinuousRun()
         QMessageBox::information(this, tr("提示"), fail);
         return;
     }
-    if (m_sourceThumbs->count() <= 0) {
-        QMessageBox::information(this, tr("提示"), tr("连续运行需要先加载图像文件夹。"));
+
+    m_continuousFromCamera = m_cameraHub && m_cameraHub->isOpen();
+    if (!m_continuousFromCamera && m_sourceThumbs->count() <= 0) {
+        QMessageBox::information(
+            this,
+            tr("提示"),
+            tr("连续运行需要先加载图像文件夹，或连接相机。"));
         return;
+    }
+
+    if (m_continuousFromCamera && m_cameraHub->isPreviewing()) {
+        m_cameraHub->stopPreview();
     }
 
     m_continuous = true;
     m_stopRequested = false;
     applyAppModeUi();
+    updateCameraActionsUi();
     updateCalibrationStatus();
-    qInfo().noquote() << tr("开始连续运行（文件夹序列循环，点停止结束）...");
+    qInfo().noquote() << (m_continuousFromCamera
+                              ? tr("开始连续运行（相机采图→测量，点停止结束）...")
+                              : tr("开始连续运行（文件夹序列循环，点停止结束）..."));
     dispatchRunOnce();
 }
 
@@ -1379,7 +1580,9 @@ void MainWindow::onStopRun()
     }
     m_stopRequested = true;
     m_continuous = false;
+    m_continuousFromCamera = false;
     applyAppModeUi();
+    updateCameraActionsUi();
     updateCalibrationStatus();
     qInfo().noquote() << tr("已请求停止，等待当前周期结束...");
 }
@@ -1468,27 +1671,46 @@ void MainWindow::onCycleFinished(const Me::CycleResult &result)
     // 非连续或用户已点停止：结束 busy 状态
     if (m_stopRequested || !m_continuous) {
         m_continuous = false;
+        m_continuousFromCamera = false;
         m_stopRequested = false;
         setBusyUi(false);
+        updateCameraActionsUi();
         return;
     }
 
-    // 连续模式：切下一张（ThumbnailStrip 到末尾回绕）→ 再 dispatchRunOnce
-    if (m_sourceThumbs->count() <= 0) {
-        m_continuous = false;
-        setBusyUi(false);
-        qWarning().noquote() << tr("连续运行中断：无图像");
-        return;
-    }
-    m_sourceThumbs->selectNext();
-    // selectNext 会同步更新 m_currentImage
     setBusyUi(false); // 周期间隙短暂释放 UI，便于响应停止
     if (m_stopRequested) {
         m_continuous = false;
+        m_continuousFromCamera = false;
         m_stopRequested = false;
         applyAppModeUi();
+        updateCameraActionsUi();
         return;
     }
+
+    if (m_continuousFromCamera) {
+        QString err;
+        if (!grabCameraFrameToCurrent(&err)) {
+            m_continuous = false;
+            m_continuousFromCamera = false;
+            setBusyUi(false);
+            updateCameraActionsUi();
+            qWarning().noquote() << tr("连续运行中断：相机采图失败 — %1").arg(err);
+            QMessageBox::warning(this, tr("连续运行中断"), err);
+            return;
+        }
+    } else {
+        if (m_sourceThumbs->count() <= 0) {
+            m_continuous = false;
+            m_continuousFromCamera = false;
+            setBusyUi(false);
+            updateCameraActionsUi();
+            qWarning().noquote() << tr("连续运行中断：无图像");
+            return;
+        }
+        m_sourceThumbs->selectNext();
+    }
+
     m_continuous = true;
     dispatchRunOnce();
 }

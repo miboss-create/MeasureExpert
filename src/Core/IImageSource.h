@@ -5,8 +5,9 @@
  * @file IImageSource.h
  * @brief 图像源抽象：统一 open / grab / close 接口。
  *
- * MVP 阶段主界面仍通过 ThumbnailStrip 浏览文件夹图像；
- * FolderImageSource::grab 尚未接入，CameraImageSource 为 V2+ 占位。
+ * - 文件夹：主界面仍多用 ThumbnailStrip；FolderImageSource 保留兼容。
+ * - 相机：请使用 CameraHub + ICameraBackend（HALCON Image Acquisition），
+ *   不再在本文件内堆厂商逻辑。
  */
 
 #include <QImage>
@@ -71,32 +72,6 @@ public:
 private:
     QString m_folderPath;
     bool m_opened = false;
-};
-
-/** 工业相机源占位（V2+） */
-class CameraImageSource : public IImageSource
-{
-public:
-    QString name() const override { return QStringLiteral("Camera"); }
-
-    bool open(QString *error = nullptr) override
-    {
-        if (error) {
-            *error = QStringLiteral("相机图像源尚未实现");
-        }
-        return false;
-    }
-
-    void close() override {}
-
-    bool grab(QImage *out, QString *error = nullptr) override
-    {
-        Q_UNUSED(out);
-        if (error) {
-            *error = QStringLiteral("相机图像源尚未实现");
-        }
-        return false;
-    }
 };
 
 } // namespace Me

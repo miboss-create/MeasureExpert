@@ -139,10 +139,26 @@ void ProjectService::setProjectName(const QString &name)
 void ProjectService::setImageSourceFolder(const QString &folderPath)
 {
     m_project.imageSource.type = ImageSourceType::Folder;
+    m_project.imageSource.cameraBackend.clear();
+    m_project.imageSource.cameraDeviceId.clear();
+    m_project.imageSource.cameraDisplayName.clear();
     if (m_project.imageSource.path == folderPath) {
+        markDirty();
         return;
     }
     m_project.imageSource.path = folderPath;
+    markDirty();
+}
+
+void ProjectService::setImageSourceCamera(const QString &backendId,
+                                          const QString &deviceId,
+                                          const QString &displayName)
+{
+    m_project.imageSource.type = ImageSourceType::Camera;
+    m_project.imageSource.path.clear();
+    m_project.imageSource.cameraBackend = backendId;
+    m_project.imageSource.cameraDeviceId = deviceId;
+    m_project.imageSource.cameraDisplayName = displayName;
     markDirty();
 }
 

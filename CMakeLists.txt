@@ -79,6 +79,12 @@ qt_add_executable(MeasureExpert
     src/Core/CsvResultStore.h
     src/Core/IImageSource.h
     src/Core/ICommIO.h
+    src/Core/CameraTypes.h
+    src/Core/ICameraBackend.h
+    src/Core/HalconCameraBackend.cpp
+    src/Core/HalconCameraBackend.h
+    src/Core/CameraHub.cpp
+    src/Core/CameraHub.h
     src/Alg/AlgTypes.h
     src/Alg/ITool.h
     src/Alg/ToolCommon.h
@@ -108,6 +114,8 @@ qt_add_executable(MeasureExpert
     src/UI/MainWindow.h
     src/UI/CalibrationDialog.cpp
     src/UI/CalibrationDialog.h
+    src/UI/CameraConnectDialog.cpp
+    src/UI/CameraConnectDialog.h
     src/UI/TrainAlignmentDialog.cpp
     src/UI/TrainAlignmentDialog.h
     src/UI/EditMeasureDialog.cpp

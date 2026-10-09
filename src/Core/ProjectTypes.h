@@ -125,7 +125,12 @@ struct Recipe {
 /** 工程级图像源配置 */
 struct ImageSourceConfig {
     ImageSourceType type = ImageSourceType::Folder;
-    QString path; ///< Folder 路径；Camera 参数预留
+    QString path; ///< Folder 路径
+    /** Camera：后端 ID（Halcon），空则默认 Halcon */
+    QString cameraBackend;
+    /** Camera：设备 ID（Halcon 为「接口>>Device」） */
+    QString cameraDeviceId;
+    QString cameraDisplayName;
 
     QJsonObject toJson() const;
     static ImageSourceConfig fromJson(const QJsonObject &obj);

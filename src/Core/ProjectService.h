@@ -47,6 +47,9 @@ public:
 
     void setProjectName(const QString &name);
     void setImageSourceFolder(const QString &folderPath);
+    void setImageSourceCamera(const QString &backendId,
+                              const QString &deviceId,
+                              const QString &displayName);
     void setActiveRecipeId(const QString &recipeId, bool markAsDirty = true);
 
     Recipe *activeRecipe();

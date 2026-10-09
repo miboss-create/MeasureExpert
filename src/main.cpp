@@ -24,14 +24,18 @@ int main(int argc, char *argv[])
     const QIcon appIcon(QStringLiteral(":/icons/app_icon.png"));
     QApplication::setWindowIcon(appIcon);
 
-    MainWindow window;
-    window.setWindowIcon(appIcon);
-    window.show();
+    int code = 0;
+    {
+        MainWindow window;
+        window.setWindowIcon(appIcon);
+        window.show();
 
-    qInfo().noquote() << QObject::tr("MeasureExpert 已启动（主图：Qt ImageView）");
-    qInfo().noquote() << QObject::tr("日志目录: %1").arg(LogSink::instance()->logDirPath());
+        qInfo().noquote() << QObject::tr("MeasureExpert 已启动（主图：Qt ImageView）");
+        qInfo().noquote() << QObject::tr("日志目录: %1").arg(LogSink::instance()->logDirPath());
 
-    const int code = app.exec();
+        code = app.exec();
+    } // MainWindow 在此析构，QApplication 仍存活
+
     LogSink::instance()->uninstallMessageHandler();
     return code;
 }

@@ -311,6 +311,15 @@ QJsonObject ImageSourceConfig::toJson() const
     QJsonObject obj;
     obj.insert(QStringLiteral("type"), imageSourceTypeToString(type));
     obj.insert(QStringLiteral("path"), path);
+    if (!cameraBackend.isEmpty()) {
+        obj.insert(QStringLiteral("cameraBackend"), cameraBackend);
+    }
+    if (!cameraDeviceId.isEmpty()) {
+        obj.insert(QStringLiteral("cameraDeviceId"), cameraDeviceId);
+    }
+    if (!cameraDisplayName.isEmpty()) {
+        obj.insert(QStringLiteral("cameraDisplayName"), cameraDisplayName);
+    }
     return obj;
 }
 
@@ -319,6 +328,9 @@ ImageSourceConfig ImageSourceConfig::fromJson(const QJsonObject &obj)
     ImageSourceConfig cfg;
     cfg.type = imageSourceTypeFromString(jsonString(obj, "type", QStringLiteral("Folder")));
     cfg.path = jsonString(obj, "path");
+    cfg.cameraBackend = jsonString(obj, "cameraBackend");
+    cfg.cameraDeviceId = jsonString(obj, "cameraDeviceId");
+    cfg.cameraDisplayName = jsonString(obj, "cameraDisplayName");
     return cfg;
 }
 

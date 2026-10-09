@@ -10,6 +10,7 @@
 namespace Me {
 class ProjectService;
 class RunEngine;
+class CameraHub;
 }
 
 class QAction;
@@ -56,6 +57,13 @@ private slots:
     // ---- 图像源 ----
     void onLoadImage();
     void onLoadFolder();
+    void onConnectCamera();
+    void onGrabCameraFrame();
+    void onToggleCameraPreview();
+    void onDisconnectCamera();
+    void onCameraFrameReady(const QImage &image);
+    void onCameraOpenedChanged(bool open);
+    void onCameraPreviewChanged(bool on);
     void onThumbImageChanged(const QImage &image);
     void onThumbPathChanged(const QString &path);
 
@@ -132,6 +140,10 @@ private:
     void applyCycleResult(const Me::CycleResult &result);
     QImage makeOverlayImage(const QImage &source, const Me::CycleResult &result) const;
     void maybeWriteCsv(const Me::CycleResult &result);
+    /** 将相机帧设为当前工作图（供预览/单帧/连续采图） */
+    void applyCameraFrame(const QImage &image, bool fromPreview);
+    bool grabCameraFrameToCurrent(QString *error = nullptr);
+    void updateCameraActionsUi();
 
     // ---- 工程持久化 ----
     void maybeLoadImageFolderFromProject();
@@ -163,6 +175,7 @@ private:
 
     Me::ProjectService *m_projectService = nullptr;
     Me::RunEngine *m_runEngine = nullptr;
+    Me::CameraHub *m_cameraHub = nullptr;
     QThread *m_runThread = nullptr;
     QAction *m_trainAlignAction = nullptr;
     QAction *m_drawMeasureRoiAction = nullptr;
@@ -172,6 +185,10 @@ private:
     QAction *m_stopAction = nullptr;
     QAction *m_modeToggleAction = nullptr;
     QAction *m_manageRecipesAction = nullptr;
+    QAction *m_connectCameraAction = nullptr;
+    QAction *m_grabCameraAction = nullptr;
+    QAction *m_previewCameraAction = nullptr;
+    QAction *m_disconnectCameraAction = nullptr;
     RoiEditMode m_roiEditMode = RoiEditMode::None;
     AppMode m_appMode = AppMode::Edit;
 
@@ -193,8 +210,9 @@ private:
     QSplitter *m_mainSplitter = nullptr;
     bool m_updatingLists = false;   ///< 刷新列表时抑制 selectionChanged 重入
     bool m_busy = false;            ///< 单次/连续周期进行中
-    bool m_continuous = false;      ///< 连续运行（文件夹序列循环）
+    bool m_continuous = false;      ///< 连续运行（文件夹序列或相机连续采图）
     bool m_stopRequested = false;   ///< 用户点停止，当前周期结束后不再派发
+    bool m_continuousFromCamera = false; ///< 连续运行使用相机 grab 而非缩略图翻页
     QString m_currentImageStatus;
     QString m_currentImagePath;
     QImage m_currentImage;
