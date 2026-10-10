@@ -16,11 +16,11 @@ class CameraHub;
 class QAction;
 class QCloseEvent;
 class QLabel;
-class QListWidget;
 class QTextEdit;
 class QTableWidget;
 class QSplitter;
 class QPushButton;
+class QToolButton;
 class QThread;
 class CustomImageView;
 class LogWidget;
@@ -138,6 +138,8 @@ private:
     /** 经 QueuedConnection 向工作线程派发 runOnce */
     void dispatchRunOnce();
     void applyCycleResult(const Me::CycleResult &result);
+    /** state: 1=OK, 0=NG, 其他=尚未判定 */
+    void setTotalVerdict(int state);
     QImage makeOverlayImage(const QImage &source, const Me::CycleResult &result) const;
     void maybeWriteCsv(const Me::CycleResult &result);
     /** 将相机帧设为当前工作图（供预览/单帧/连续采图） */
@@ -178,7 +180,6 @@ private:
     Me::CameraHub *m_cameraHub = nullptr;
     QThread *m_runThread = nullptr;
     QAction *m_trainAlignAction = nullptr;
-    QAction *m_drawMeasureRoiAction = nullptr;
     QAction *m_cancelRoiAction = nullptr;
     QAction *m_runOnceAction = nullptr;
     QAction *m_continuousAction = nullptr;
@@ -193,11 +194,11 @@ private:
     AppMode m_appMode = AppMode::Edit;
 
     QLabel *m_activeRecipeLabel = nullptr;
-    QListWidget *m_measureList = nullptr;
     QPushButton *m_addMeasureBtn = nullptr;
     QPushButton *m_removeMeasureBtn = nullptr;
     QPushButton *m_editMeasureBtn = nullptr;
     QPushButton *m_drawMeasureRoiBtn = nullptr;
+    QToolButton *m_propertyToggle = nullptr;
     LogWidget *m_logWidget = nullptr;
 
     ThumbnailStrip *m_sourceThumbs = nullptr;

@@ -33,10 +33,14 @@ inline HalconCpp::HTuple homTuple6(const double hom[6])
 /**
  * 用定位 HomMat 把卡尺从「相对模板」变到目标坐标系。
  *
- * 中心、长轴端点都走 AffineTransPixel（与 HALCON affine_trans_pixel 一致）。
- * φ 由变换后的长轴方向 atan2 得到，不要写成 φ±Angle：
- * VectorAngleToRigid 下 φ+Angle 与点仿射的长轴相反，框会绕着正确中心转反。
- * 也不要用 SmallestRectangle2 的 phi，它和这条长轴差一个符号。
+ * 约定：phi 一律为 HALCON rectangle2 / GenMeasureRectangle2 角
+ * （Length1 相对 +column 的数学正方向：dcol=cosφ, drow=-sinφ）。
+ *
+ * 中心与 Length1 端点都走 AffineTransPixel；φ 用变换后的长轴还原：
+ *   phi = atan2(-drow, dcol)
+ * 等价于官方写法 phi' = phi + FindShapeModel.Angle，且与轮廓 HomMat 一致。
+ * 不要用 atan2(drow,dcol)（那是 Qt/y 向下角，符号相反）；
+ * 也不要用 SmallestRectangle2 的 phi（与 Length1 可能差符号/互换轴）。
  */
 inline bool affineCaliper(const double hom[6],
                           double rowIn,
@@ -55,7 +59,8 @@ inline bool affineCaliper(const double hom[6],
 
     try {
         const HalconCpp::HTuple homT = homTuple6(hom);
-        const double axisRow = rowIn + qSin(phiIn);
+        // HALCON Length1 端点：(drow, dcol) = (-sin φ, cos φ)
+        const double axisRow = rowIn - qSin(phiIn);
         const double axisCol = colIn + qCos(phiIn);
 
         HalconCpp::HTuple r0;
@@ -67,11 +72,23 @@ inline bool affineCaliper(const double hom[6],
 
         *rowOut = r0[0].D();
         *colOut = c0[0].D();
-        *phiOut = qAtan2(r1[0].D() - r0[0].D(), c1[0].D() - c0[0].D());
+        const double drow = r1[0].D() - r0[0].D();
+        const double dcol = c1[0].D() - c0[0].D();
+        *phiOut = qAtan2(-drow, dcol);
         return qIsFinite(*rowOut) && qIsFinite(*colOut) && qIsFinite(*phiOut);
     } catch (...) {
         return false;
     }
+}
+
+/** HALCON rectangle2 φ ↔ Qt/RoiRectItem φ（y 向下 atan2(drow,dcol)），互为相反数 */
+inline double halconPhiToQt(double phiHalcon)
+{
+    return -phiHalcon;
+}
+inline double qtPhiToHalcon(double phiQt)
+{
+    return -phiQt;
 }
 
 /** QImage → 单通道 HImage（彩色则 Rgb1ToGray） */
@@ -164,7 +181,8 @@ inline QVector<Point2D> tupleToPoints(const HalconCpp::HTuple &rows, const Halco
  *   true  — ROI 相对定位模板；必须 alignment.ok，用 homMat2D 仿射中心与长轴
  *   false — ROI 本身就是图像坐标（无模板或未启用跟随），直接拷贝
  *
- * 输出 *phiImg 为 HALCON rectangle2 / 界面共用角（atan2(drow,dcol)）。
+ * 输出 *phiImg 为 HALCON rectangle2 角（与 GenMeasureRectangle2 一致）。
+ * 叠图 / RoiRectItem 需用 halconPhiToQt / qtPhiToHalcon 转换。
  */
 inline bool resolveImageCaliper(const MeasureItem &item,
                                 const AlignmentResult &alignment,

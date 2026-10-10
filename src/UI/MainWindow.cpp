@@ -30,6 +30,7 @@
 
 #include <QAction>
 #include <QAbstractItemView>
+#include <QBrush>
 #include <QCloseEvent>
 #include <QColor>
 #include <QComboBox>
@@ -47,11 +48,11 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
-#include <QListWidget>
 #include <QMessageBox>
 #include <QMenuBar>
 #include <QPainter>
 #include <QPushButton>
+#include <QSizePolicy>
 #include <QSplitter>
 #include <QStatusBar>
 #include <QTableWidget>
@@ -59,6 +60,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QToolBar>
+#include <QToolButton>
 #include <QThread>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -180,14 +182,9 @@ void MainWindow::updateRoiActionTexts()
             m_trainAlignAction->setText(tr("创建定位模板"));
         }
     }
-    const QString measureText = (m_roiEditMode == RoiEditMode::MeasureCaliper)
-        ? tr("确认卡尺ROI")
-        : tr("画卡尺ROI");
-    if (m_drawMeasureRoiAction) {
-        m_drawMeasureRoiAction->setText(measureText);
-    }
     if (m_drawMeasureRoiBtn) {
-        m_drawMeasureRoiBtn->setText(measureText);
+        m_drawMeasureRoiBtn->setText(
+            (m_roiEditMode == RoiEditMode::MeasureCaliper) ? tr("确认ROI") : tr("画ROI"));
     }
 }
 
@@ -305,7 +302,8 @@ bool MainWindow::measureGeometryToImageRoi(const Me::CaliperGeometry &geo,
     }
 
     *centerOut = QPointF(colImg, rowImg);
-    *phiOut = phiImg;
+    // RoiRectItem 用 Qt φ（y 向下）；算法/配方存 HALCON φ
+    *phiOut = Me::ToolCommon::halconPhiToQt(phiImg);
 
     if (type == MeasureType::FindCircle) {
         const double outer = qMax(4.0, geo.length1 + qMax(0.0, geo.length2));
@@ -331,6 +329,7 @@ bool MainWindow::imageRoiToMeasureGeometry(const QPointF &centerImg,
     }
     const double rowImg = centerImg.y();
     const double colImg = centerImg.x();
+    const double phiHalcon = Me::ToolCommon::qtPhiToHalcon(phiImg);
 
     if (align.ok) {
         try {
@@ -343,7 +342,7 @@ bool MainWindow::imageRoiToMeasureGeometry(const QPointF &centerImg,
             if (!Me::ToolCommon::affineCaliper(inv6,
                                                rowImg,
                                                colImg,
-                                               phiImg,
+                                               phiHalcon,
                                                &out->row,
                                                &out->column,
                                                &out->phi)) {
@@ -355,7 +354,7 @@ bool MainWindow::imageRoiToMeasureGeometry(const QPointF &centerImg,
     } else {
         out->row = rowImg;
         out->column = colImg;
-        out->phi = phiImg;
+        out->phi = phiHalcon;
     }
     out->length1 = qMax(2.0, length1);
     out->length2 = qMax(2.0, length2);
@@ -401,55 +400,24 @@ void MainWindow::setupRunEngine()
     m_runThread->start();
 }
 
-// ---- 界面布局（三栏：配置+日志 | 缩略图+主图 | 判定+属性） ----
+// ---- 界面布局：缩略图 | 主图 | 测量结果；底部日志 ----
 
 bool MainWindow::initWidget()
 {
-    auto *configPanel = new QWidget(this);
-    auto *configLayout = new QVBoxLayout(configPanel);
-    configLayout->setContentsMargins(4, 4, 4, 4);
-
-    m_activeRecipeLabel = new QLabel(configPanel);
-    m_activeRecipeLabel->setWordWrap(true);
-    configLayout->addWidget(m_activeRecipeLabel);
-
-    configLayout->addWidget(new QLabel(tr("测量项"), configPanel));
-    m_measureList = new QListWidget(configPanel);
-    configLayout->addWidget(m_measureList, 1);
-
-    auto *measureBtnRow = new QHBoxLayout();
-    m_addMeasureBtn = new QPushButton(tr("添加"), configPanel);
-    m_editMeasureBtn = new QPushButton(tr("编辑"), configPanel);
-    m_drawMeasureRoiBtn = new QPushButton(tr("画卡尺ROI"), configPanel);
-    m_removeMeasureBtn = new QPushButton(tr("删除"), configPanel);
-    measureBtnRow->addWidget(m_addMeasureBtn);
-    measureBtnRow->addWidget(m_editMeasureBtn);
-    measureBtnRow->addWidget(m_drawMeasureRoiBtn);
-    measureBtnRow->addWidget(m_removeMeasureBtn);
-    configLayout->addLayout(measureBtnRow);
-
-    connect(m_measureList, &QListWidget::currentRowChanged,
-            this, &MainWindow::onMeasureSelectionChanged);
-    connect(m_measureList, &QListWidget::itemDoubleClicked,
-            this, &MainWindow::onMeasureDoubleClicked);
-    connect(m_addMeasureBtn, &QPushButton::clicked, this, &MainWindow::onAddMeasure);
-    connect(m_editMeasureBtn, &QPushButton::clicked, this, &MainWindow::onEditMeasure);
-    connect(m_drawMeasureRoiBtn, &QPushButton::clicked, this, &MainWindow::onDrawMeasureRoi);
-    connect(m_removeMeasureBtn, &QPushButton::clicked, this, &MainWindow::onRemoveMeasure);
-
-    m_logWidget = new LogWidget(this);
-
-    auto *leftSplitter = new QSplitter(Qt::Vertical, this);
-    leftSplitter->addWidget(configPanel);
-    leftSplitter->addWidget(m_logWidget);
-    leftSplitter->setStretchFactor(0, 3);
-    leftSplitter->setStretchFactor(1, 2);
-
     m_sourceThumbs = new ThumbnailStrip(ThumbnailStrip::Orientation::Vertical, this);
     connect(m_sourceThumbs, &ThumbnailStrip::currentImageChanged,
             this, &MainWindow::onThumbImageChanged);
     connect(m_sourceThumbs, &ThumbnailStrip::currentPathChanged,
             this, &MainWindow::onThumbPathChanged);
+
+    m_activeRecipeLabel = new QLabel(this);
+    m_activeRecipeLabel->setWordWrap(false);
+    m_activeRecipeLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+
+    m_okNgLabel = new QLabel(tr("---"), this);
+    m_okNgLabel->setAlignment(Qt::AlignCenter);
+    m_okNgLabel->setFixedSize(72, 28);
+    setTotalVerdict(-1);
 
     m_imageView = new CustomImageView(this);
     m_imageView->setMinimumSize(400, 300);
@@ -466,51 +434,110 @@ bool MainWindow::initWidget()
         qInfo().noquote() << tr("ROI 已删除");
     });
 
-    auto *centerWidget = new QWidget(this);
-    auto *centerLayout = new QHBoxLayout(centerWidget);
-    centerLayout->setContentsMargins(0, 0, 0, 0);
-    centerLayout->setSpacing(4);
-    centerLayout->addWidget(m_sourceThumbs);
-    centerLayout->addWidget(m_imageView, 1);
+    auto *imageBar = new QWidget(this);
+    auto *imageBarLayout = new QHBoxLayout(imageBar);
+    imageBarLayout->setContentsMargins(6, 2, 6, 2);
+    imageBarLayout->setSpacing(8);
+    imageBarLayout->addWidget(m_activeRecipeLabel, 1);
+    imageBarLayout->addWidget(m_okNgLabel);
 
-    m_okNgLabel = new QLabel(tr("---"), this);
-    m_okNgLabel->setAlignment(Qt::AlignCenter);
-    m_okNgLabel->setMinimumHeight(80);
-    m_okNgLabel->setStyleSheet(
-        QStringLiteral("QLabel { font-size: 36px; font-weight: bold; background: #3a3a3a; color: #dddddd; }"));
+    auto *imageColumn = new QWidget(this);
+    auto *imageLayout = new QVBoxLayout(imageColumn);
+    imageLayout->setContentsMargins(0, 0, 0, 0);
+    imageLayout->setSpacing(2);
+    imageLayout->addWidget(imageBar);
+    imageLayout->addWidget(m_imageView, 1);
 
-    m_resultTable = new QTableWidget(0, 4, this);
+    auto *measurePanel = new QWidget(this);
+    measurePanel->setMinimumWidth(280);
+    measurePanel->setMaximumWidth(360);
+    auto *measureLayout = new QVBoxLayout(measurePanel);
+    measureLayout->setContentsMargins(4, 4, 4, 4);
+    measureLayout->setSpacing(4);
+
+    auto *title = new QLabel(tr("测量"), measurePanel);
+    m_addMeasureBtn = new QPushButton(tr("添加"), measurePanel);
+    m_editMeasureBtn = new QPushButton(tr("编辑"), measurePanel);
+    m_drawMeasureRoiBtn = new QPushButton(tr("画ROI"), measurePanel);
+    m_removeMeasureBtn = new QPushButton(tr("删除"), measurePanel);
+    for (QPushButton *btn : {m_addMeasureBtn, m_editMeasureBtn, m_drawMeasureRoiBtn, m_removeMeasureBtn}) {
+        btn->setFixedHeight(24);
+    }
+    auto *titleRow = new QHBoxLayout();
+    titleRow->setSpacing(4);
+    titleRow->addWidget(title);
+    titleRow->addStretch(1);
+    titleRow->addWidget(m_addMeasureBtn);
+    titleRow->addWidget(m_editMeasureBtn);
+    titleRow->addWidget(m_drawMeasureRoiBtn);
+    titleRow->addWidget(m_removeMeasureBtn);
+    measureLayout->addLayout(titleRow);
+
+    m_resultTable = new QTableWidget(0, 4, measurePanel);
     m_resultTable->setHorizontalHeaderLabels(
         {tr("名称"), tr("测量值"), tr("公差"), tr("判定")});
-    m_resultTable->horizontalHeader()->setStretchLastSection(true);
     m_resultTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_resultTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_resultTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_resultTable->setAlternatingRowColors(true);
+    m_resultTable->setShowGrid(false);
+    m_resultTable->verticalHeader()->setVisible(false);
+    m_resultTable->verticalHeader()->setDefaultSectionSize(26);
+    auto *header = m_resultTable->horizontalHeader();
+    header->setSectionResizeMode(0, QHeaderView::Stretch);
+    header->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    header->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    header->setSectionResizeMode(3, QHeaderView::Fixed);
+    m_resultTable->setColumnWidth(3, 48);
+    measureLayout->addWidget(m_resultTable, 1);
 
-    m_propertyPanel = new QTextEdit(this);
+    m_propertyToggle = new QToolButton(measurePanel);
+    m_propertyToggle->setText(tr("属性"));
+    m_propertyToggle->setCheckable(true);
+    m_propertyToggle->setChecked(false);
+    m_propertyToggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_propertyToggle->setArrowType(Qt::RightArrow);
+    m_propertyPanel = new QTextEdit(measurePanel);
     m_propertyPanel->setReadOnly(true);
-    m_propertyPanel->setPlaceholderText(tr("测量项属性（名义/公差）"));
-    m_propertyPanel->setMaximumHeight(160);
+    m_propertyPanel->setPlaceholderText(tr("选中测量项后展开，查看名义值与几何"));
+    m_propertyPanel->setVisible(false);
+    m_propertyPanel->setMaximumHeight(140);
+    measureLayout->addWidget(m_propertyToggle);
+    measureLayout->addWidget(m_propertyPanel);
 
-    auto *judgePanel = new QWidget(this);
-    auto *judgeLayout = new QVBoxLayout(judgePanel);
-    judgeLayout->setContentsMargins(4, 4, 4, 4);
-    judgeLayout->addWidget(m_okNgLabel);
-    judgeLayout->addWidget(m_resultTable, 1);
+    connect(m_propertyToggle, &QToolButton::toggled, this, [this](bool on) {
+        m_propertyToggle->setArrowType(on ? Qt::DownArrow : Qt::RightArrow);
+        m_propertyPanel->setVisible(on);
+        if (on) {
+            refreshMeasureProperties();
+        }
+    });
+    connect(m_resultTable, &QTableWidget::currentCellChanged,
+            this, [this](int, int, int, int) { onMeasureSelectionChanged(); });
+    connect(m_resultTable, &QTableWidget::cellDoubleClicked,
+            this, [this](int, int) { onMeasureDoubleClicked(); });
+    connect(m_addMeasureBtn, &QPushButton::clicked, this, &MainWindow::onAddMeasure);
+    connect(m_editMeasureBtn, &QPushButton::clicked, this, &MainWindow::onEditMeasure);
+    connect(m_drawMeasureRoiBtn, &QPushButton::clicked, this, &MainWindow::onDrawMeasureRoi);
+    connect(m_removeMeasureBtn, &QPushButton::clicked, this, &MainWindow::onRemoveMeasure);
 
-    auto *rightSplitter = new QSplitter(Qt::Vertical, this);
-    rightSplitter->addWidget(judgePanel);
-    rightSplitter->addWidget(m_propertyPanel);
-    rightSplitter->setStretchFactor(0, 3);
-    rightSplitter->setStretchFactor(1, 1);
+    auto *workRow = new QWidget(this);
+    auto *workLayout = new QHBoxLayout(workRow);
+    workLayout->setContentsMargins(0, 0, 0, 0);
+    workLayout->setSpacing(4);
+    workLayout->addWidget(m_sourceThumbs);
+    workLayout->addWidget(imageColumn, 1);
+    workLayout->addWidget(measurePanel);
 
-    m_mainSplitter = new QSplitter(Qt::Horizontal, this);
-    m_mainSplitter->addWidget(leftSplitter);
-    m_mainSplitter->addWidget(centerWidget);
-    m_mainSplitter->addWidget(rightSplitter);
-    m_mainSplitter->setStretchFactor(0, 2);
-    m_mainSplitter->setStretchFactor(1, 5);
-    m_mainSplitter->setStretchFactor(2, 2);
-    m_mainSplitter->setSizes({220, 760, 280});
+    m_logWidget = new LogWidget(this);
+    m_logWidget->setMinimumHeight(72);
+
+    m_mainSplitter = new QSplitter(Qt::Vertical, this);
+    m_mainSplitter->addWidget(workRow);
+    m_mainSplitter->addWidget(m_logWidget);
+    m_mainSplitter->setStretchFactor(0, 5);
+    m_mainSplitter->setStretchFactor(1, 1);
+    m_mainSplitter->setSizes({640, 140});
 
     setCentralWidget(m_mainSplitter);
     return true;
@@ -520,16 +547,18 @@ bool MainWindow::initWidget()
 
 void MainWindow::createMenus()
 {
-    // 工程：仅工程文件生命周期（与采集取图隔离）
+    // 工程：文件生命周期 + 标定（低频配置）
     auto *projectMenu = menuBar()->addMenu(tr("工程(&P)"));
     projectMenu->addAction(tr("新建工程"), this, &MainWindow::onNewProject);
     projectMenu->addAction(tr("打开工程..."), this, &MainWindow::onOpenProject);
     projectMenu->addAction(tr("保存工程"), this, &MainWindow::onSaveProject);
     projectMenu->addAction(tr("工程另存为..."), this, &MainWindow::onSaveProjectAs);
     projectMenu->addSeparator();
+    projectMenu->addAction(tr("标定..."), this, &MainWindow::onCalibration);
+    projectMenu->addSeparator();
     projectMenu->addAction(tr("退出"), this, &QWidget::close);
 
-    // 采集：文件夹离线源 + 物理相机（算法仍走 RunEngine，不在采集回调里测）
+    // 采集：离线图源 + 相机（仅菜单）
     auto *acqMenu = menuBar()->addMenu(tr("采集(&A)"));
     acqMenu->addAction(tr("加载图像..."), this, &MainWindow::onLoadImage);
     acqMenu->addAction(tr("加载图像文件夹..."), this, &MainWindow::onLoadFolder);
@@ -539,67 +568,37 @@ void MainWindow::createMenus()
     m_previewCameraAction = acqMenu->addAction(tr("开始预览"), this, &MainWindow::onToggleCameraPreview);
     m_disconnectCameraAction = acqMenu->addAction(tr("断开相机"), this, &MainWindow::onDisconnectCamera);
 
-    // 配方：测量配方管理（与工程文件、取图、试跑分离）
+    // 配方
     auto *recipeMenu = menuBar()->addMenu(tr("配方(&F)"));
     m_manageRecipesAction = recipeMenu->addAction(tr("管理配方..."), this, &MainWindow::onManageRecipes);
 
-    // 标定：像素当量 / 棋盘格（与运行/配方隔离）
-    auto *calMenu = menuBar()->addMenu(tr("标定(&C)"));
-    calMenu->addAction(tr("标定..."), this, &MainWindow::onCalibration);
-
-    // 运行：编辑期配置 + 试跑/连续（按分隔线区分）
+    // 运行菜单：定位模板 / 取消 ROI；试跑与模式只在工具栏；画 ROI / 编辑只在右侧面板
     auto *runMenu = menuBar()->addMenu(tr("运行(&R)"));
     m_trainAlignAction = runMenu->addAction(tr("创建定位模板..."), this, &MainWindow::onTrainAlignment);
-    m_drawMeasureRoiAction = runMenu->addAction(tr("画卡尺ROI..."), this, &MainWindow::onDrawMeasureRoi);
     m_cancelRoiAction = runMenu->addAction(tr("取消 ROI 编辑"), this, &MainWindow::onCancelRoiEdit);
     m_cancelRoiAction->setEnabled(false);
-    runMenu->addAction(tr("编辑测量项..."), this, &MainWindow::onEditMeasure);
-    runMenu->addSeparator();
-    m_runOnceAction = runMenu->addAction(tr("单次试跑"), this, &MainWindow::onRunOnce);
-    m_continuousAction = runMenu->addAction(tr("连续运行"), this, &MainWindow::onContinuousRun);
-    m_stopAction = runMenu->addAction(tr("停止"), this, &MainWindow::onStopRun);
+
+    // 工具栏用的高频动作（不进菜单）
+    m_runOnceAction = new QAction(tr("单次试跑"), this);
+    connect(m_runOnceAction, &QAction::triggered, this, &MainWindow::onRunOnce);
+    m_continuousAction = new QAction(tr("连续运行"), this);
+    connect(m_continuousAction, &QAction::triggered, this, &MainWindow::onContinuousRun);
+    m_stopAction = new QAction(tr("停止"), this);
+    connect(m_stopAction, &QAction::triggered, this, &MainWindow::onStopRun);
     m_stopAction->setEnabled(false);
-    runMenu->addSeparator();
-    m_modeToggleAction = runMenu->addAction(tr("切换到运行模式"), this, &MainWindow::onToggleEditRunMode);
+    m_modeToggleAction = new QAction(tr("切换到运行模式"), this);
+    connect(m_modeToggleAction, &QAction::triggered, this, &MainWindow::onToggleEditRunMode);
 }
 
 void MainWindow::createToolBar()
 {
     auto *tb = addToolBar(tr("主工具栏"));
     tb->setMovable(false);
-    tb->addAction(tr("标定"), this, &MainWindow::onCalibration);
-    if (!m_trainAlignAction) {
-        m_trainAlignAction = new QAction(tr("定位模板"), this);
-        connect(m_trainAlignAction, &QAction::triggered, this, &MainWindow::onTrainAlignment);
-    }
-    tb->addAction(m_trainAlignAction);
-    if (!m_drawMeasureRoiAction) {
-        m_drawMeasureRoiAction = new QAction(tr("画卡尺ROI"), this);
-        connect(m_drawMeasureRoiAction, &QAction::triggered, this, &MainWindow::onDrawMeasureRoi);
-    }
-    tb->addAction(m_drawMeasureRoiAction);
-    tb->addSeparator();
-    if (!m_runOnceAction) {
-        m_runOnceAction = new QAction(tr("单次试跑"), this);
-        connect(m_runOnceAction, &QAction::triggered, this, &MainWindow::onRunOnce);
-    }
+    // 仅放高频节拍控件；标定/定位模板在菜单，画 ROI 在右侧面板
     tb->addAction(m_runOnceAction);
-    if (!m_continuousAction) {
-        m_continuousAction = new QAction(tr("连续运行"), this);
-        connect(m_continuousAction, &QAction::triggered, this, &MainWindow::onContinuousRun);
-    }
     tb->addAction(m_continuousAction);
-    if (!m_stopAction) {
-        m_stopAction = new QAction(tr("停止"), this);
-        connect(m_stopAction, &QAction::triggered, this, &MainWindow::onStopRun);
-        m_stopAction->setEnabled(false);
-    }
     tb->addAction(m_stopAction);
     tb->addSeparator();
-    if (!m_modeToggleAction) {
-        m_modeToggleAction = new QAction(tr("切换到运行模式"), this);
-        connect(m_modeToggleAction, &QAction::triggered, this, &MainWindow::onToggleEditRunMode);
-    }
     tb->addAction(m_modeToggleAction);
 }
 
@@ -648,7 +647,14 @@ QString MainWindow::selectedRecipeId() const
 
 QString MainWindow::selectedMeasureId() const
 {
-    auto *item = m_measureList->currentItem();
+    if (!m_resultTable) {
+        return {};
+    }
+    const int row = m_resultTable->currentRow();
+    if (row < 0) {
+        return {};
+    }
+    const auto *item = m_resultTable->item(row, 0);
     return item ? item->data(Qt::UserRole).toString() : QString();
 }
 
@@ -673,19 +679,17 @@ void MainWindow::applyAppModeUi()
     const bool edit = (m_appMode == AppMode::Edit);
     const bool canEdit = edit && !m_busy && !m_continuous;
 
+    const bool hasMeasure = m_resultTable && m_resultTable->rowCount() > 0;
     m_addMeasureBtn->setEnabled(canEdit);
-    m_editMeasureBtn->setEnabled(canEdit && m_measureList->count() > 0);
-    m_drawMeasureRoiBtn->setEnabled(canEdit && m_measureList->count() > 0);
-    m_removeMeasureBtn->setEnabled(canEdit && m_measureList->count() > 0);
+    m_editMeasureBtn->setEnabled(canEdit && hasMeasure);
+    m_drawMeasureRoiBtn->setEnabled(canEdit && hasMeasure);
+    m_removeMeasureBtn->setEnabled(canEdit && hasMeasure);
     if (m_manageRecipesAction) {
         m_manageRecipesAction->setEnabled(canEdit);
     }
 
     if (m_trainAlignAction) {
         m_trainAlignAction->setEnabled(canEdit);
-    }
-    if (m_drawMeasureRoiAction) {
-        m_drawMeasureRoiAction->setEnabled(canEdit);
     }
     if (m_runOnceAction) {
         m_runOnceAction->setEnabled(!m_busy && !m_continuous);
@@ -722,7 +726,7 @@ void MainWindow::refreshMeasureList()
 {
     m_updatingLists = true;
     const QString keepMeasureId = selectedMeasureId();
-    m_measureList->clear();
+    m_resultTable->setRowCount(0);
 
     const auto *recipe = m_projectService->activeRecipe();
     if (!recipe) {
@@ -735,17 +739,36 @@ void MainWindow::refreshMeasureList()
     int selectRow = 0;
     for (int i = 0; i < recipe->measures.size(); ++i) {
         const auto &m = recipe->measures.at(i);
-        auto *item = new QListWidgetItem(
-            QStringLiteral("%1 (%2)").arg(m.name, Me::measureTypeToString(m.type)),
-            m_measureList);
-        item->setData(Qt::UserRole, m.id);
+        const int dec = qBound(0, m.decimals, 6);
+        m_resultTable->insertRow(i);
+        auto *nameItem = new QTableWidgetItem(
+            QStringLiteral("%1  %2").arg(m.name, Me::measureTypeToString(m.type)));
+        nameItem->setData(Qt::UserRole, m.id);
+        nameItem->setToolTip(m.name);
+        m_resultTable->setItem(i, 0, nameItem);
+
+        auto *valueItem = new QTableWidgetItem(QStringLiteral("--"));
+        valueItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        m_resultTable->setItem(i, 1, valueItem);
+
+        auto *tolItem = new QTableWidgetItem(
+            QStringLiteral("[%1, %2]")
+                .arg(m.nominal + m.lower, 0, 'f', dec)
+                .arg(m.nominal + m.upper, 0, 'f', dec));
+        tolItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        m_resultTable->setItem(i, 2, tolItem);
+
+        auto *judgeItem = new QTableWidgetItem(QStringLiteral("-"));
+        judgeItem->setTextAlignment(Qt::AlignCenter);
+        m_resultTable->setItem(i, 3, judgeItem);
+
         if (m.id == keepMeasureId) {
             selectRow = i;
         }
     }
 
-    if (m_measureList->count() > 0) {
-        m_measureList->setCurrentRow(selectRow);
+    if (m_resultTable->rowCount() > 0) {
+        m_resultTable->setCurrentCell(selectRow, 0);
     }
     m_updatingLists = false;
     applyAppModeUi();
@@ -798,37 +821,70 @@ QImage MainWindow::makeOverlayImage(const QImage &source, const Me::CycleResult 
     return Me::ResultOverlay::render(source, result);
 }
 
+void MainWindow::setTotalVerdict(int state)
+{
+    if (!m_okNgLabel) {
+        return;
+    }
+    if (state > 0) {
+        m_okNgLabel->setText(QStringLiteral("OK"));
+        m_okNgLabel->setStyleSheet(QStringLiteral(
+            "QLabel { font-size: 16px; font-weight: bold; background: #1f5c2e; color: #e8ffe8; border-radius: 4px; }"));
+    } else if (state == 0) {
+        m_okNgLabel->setText(QStringLiteral("NG"));
+        m_okNgLabel->setStyleSheet(QStringLiteral(
+            "QLabel { font-size: 16px; font-weight: bold; background: #6b1f1f; color: #ffe8e8; border-radius: 4px; }"));
+    } else {
+        m_okNgLabel->setText(QStringLiteral("---"));
+        m_okNgLabel->setStyleSheet(QStringLiteral(
+            "QLabel { font-size: 16px; font-weight: bold; background: #3a3a3a; color: #dddddd; border-radius: 4px; }"));
+    }
+}
+
 void MainWindow::applyCycleResult(const Me::CycleResult &result)
 {
     if (result.alignmentOk || !m_currentImage.isNull()) {
         m_imageView->setImage(makeOverlayImage(m_currentImage, result));
     }
 
-    if (result.totalOk) {
-        m_okNgLabel->setText(QStringLiteral("OK"));
-        m_okNgLabel->setStyleSheet(
-            QStringLiteral("QLabel { font-size: 40px; font-weight: bold; background: #1f5c2e; color: #e8ffe8; }"));
-    } else {
-        m_okNgLabel->setText(QStringLiteral("NG"));
-        m_okNgLabel->setStyleSheet(
-            QStringLiteral("QLabel { font-size: 40px; font-weight: bold; background: #6b1f1f; color: #ffe8e8; }"));
-    }
+    setTotalVerdict(result.totalOk ? 1 : 0);
 
-    m_resultTable->setRowCount(0);
-    for (const auto &m : result.measures) {
-        const int row = m_resultTable->rowCount();
-        m_resultTable->insertRow(row);
-        m_resultTable->setItem(row, 0, new QTableWidgetItem(m.name));
-        m_resultTable->setItem(row, 1, new QTableWidgetItem(
-            m.measured ? QStringLiteral("%1 %2").arg(m.value, 0, 'f', m.decimals).arg(m.unit)
-                       : QStringLiteral("--")));
-        m_resultTable->setItem(row, 2, new QTableWidgetItem(
-            QStringLiteral("[%1, %2]")
-                .arg(m.nominal + m.lower, 0, 'f', m.decimals)
-                .arg(m.nominal + m.upper, 0, 'f', m.decimals)));
-        auto *judgeItem = new QTableWidgetItem(m.ok ? QStringLiteral("OK") : QStringLiteral("NG"));
-        judgeItem->setForeground(m.ok ? QColor(40, 160, 60) : QColor(200, 50, 50));
-        m_resultTable->setItem(row, 3, judgeItem);
+    for (int row = 0; row < m_resultTable->rowCount(); ++row) {
+        auto *nameItem = m_resultTable->item(row, 0);
+        if (!nameItem) {
+            continue;
+        }
+        const QString id = nameItem->data(Qt::UserRole).toString();
+        const Me::MeasureResult *found = nullptr;
+        for (const auto &m : result.measures) {
+            if (m.id == id) {
+                found = &m;
+                break;
+            }
+        }
+        auto *valueItem = m_resultTable->item(row, 1);
+        auto *judgeItem = m_resultTable->item(row, 3);
+        if (!valueItem || !judgeItem) {
+            continue;
+        }
+        if (!found) {
+            valueItem->setText(QStringLiteral("--"));
+            judgeItem->setText(QStringLiteral("-"));
+            judgeItem->setForeground(QBrush());
+            continue;
+        }
+        const int dec = qBound(0, found->decimals, 6);
+        valueItem->setText(found->measured
+                               ? QStringLiteral("%1 %2").arg(found->value, 0, 'f', dec).arg(found->unit)
+                               : QStringLiteral("--"));
+        judgeItem->setText(found->ok ? QStringLiteral("OK") : QStringLiteral("NG"));
+        judgeItem->setForeground(found->ok ? QColor(30, 140, 55) : QColor(190, 40, 40));
+        const QColor rowColor = found->ok ? QColor(232, 245, 233) : QColor(255, 232, 232);
+        for (int col = 0; col < m_resultTable->columnCount(); ++col) {
+            if (auto *cell = m_resultTable->item(row, col)) {
+                cell->setBackground(rowColor);
+            }
+        }
     }
 
     statusBar()->showMessage(
@@ -925,9 +981,7 @@ void MainWindow::onNewProject()
         return;
     }
     m_projectService->createNew(name.trimmed().isEmpty() ? tr("未命名工程") : name.trimmed());
-    m_okNgLabel->setText(QStringLiteral("---"));
-    m_okNgLabel->setStyleSheet(
-        QStringLiteral("QLabel { font-size: 36px; font-weight: bold; background: #3a3a3a; color: #dddddd; }"));
+    setTotalVerdict(-1);
     m_resultTable->setRowCount(0);
     qInfo().noquote() << tr("已新建工程: %1").arg(m_projectService->project().name);
     updateWindowTitle();
@@ -1010,7 +1064,10 @@ void MainWindow::applyCameraFrame(const QImage &image, bool fromPreview)
         return;
     }
     m_currentImage = image;
-    m_imageView->setImage(image);
+    // 连续运行：只更新算法用图，主视图保留上一周期叠加，等 onCycleFinished 再刷
+    if (!m_continuous) {
+        m_imageView->setImage(image);
+    }
     const QString name = m_cameraHub && m_cameraHub->isOpen()
         ? m_cameraHub->currentDevice().displayName
         : tr("相机");
@@ -1471,7 +1528,7 @@ void MainWindow::onDrawMeasureRoi()
     mr.measured = false;
     mr.imageRow = centerImg.y();
     mr.imageCol = centerImg.x();
-    mr.imagePhi = phiImg;
+    mr.imagePhi = Me::ToolCommon::qtPhiToHalcon(phiImg);
     mr.length1 = geo.length1;
     mr.length2 = geo.length2;
     mr.angleExtent = geo.angleExtent;
@@ -1741,7 +1798,10 @@ void MainWindow::onRunError(const QString &message)
 void MainWindow::onThumbImageChanged(const QImage &image)
 {
     m_currentImage = image;
-    m_imageView->setImage(image);
+    // 连续运行切下一张时勿用原图盖掉上一周期结果叠加
+    if (!m_continuous) {
+        m_imageView->setImage(image);
+    }
 }
 
 void MainWindow::onThumbPathChanged(const QString &path)

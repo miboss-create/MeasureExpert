@@ -198,7 +198,8 @@ QImage ResultOverlay::render(const QImage &source, const CycleResult &result)
         if (isCaliperType(m.type) || m.type == MeasureType::FindLine) {
             p.save();
             p.translate(m.imageCol, m.imageRow);
-            p.rotate(qRadiansToDegrees(m.imagePhi));
+            // imagePhi 为 HALCON rectangle2 角；QPainter::rotate 为顺时针，故取反
+            p.rotate(-qRadiansToDegrees(m.imagePhi));
             const double l1 = m.length1 > 0 ? m.length1 : 40.0;
             const double l2 = m.length2 > 0 ? m.length2 : 10.0;
             QPen rectPen(measureColor, 2);

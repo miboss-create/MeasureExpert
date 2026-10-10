@@ -416,7 +416,9 @@ Project Project::fromJson(const QJsonObject &obj, QString *error)
 
     Project project;
     project.name = jsonString(obj, "name", QStringLiteral("未命名工程"));
-    project.formatVersion = jsonString(obj, "version", QString::fromUtf8(kProjectFileVersion));
+    // 缺省按 1.0，以便无 version 字段的旧工程也能做 φ 迁移
+    const QString loadedVersion = jsonString(obj, "version", QStringLiteral("1.0"));
+    project.formatVersion = QString::fromUtf8(kProjectFileVersion);
     project.imageSource = ImageSourceConfig::fromJson(obj.value(QStringLiteral("imageSource")).toObject());
     project.calibration = CalibrationConfig::fromJson(obj.value(QStringLiteral("calibration")).toObject());
     project.activeRecipeId = jsonString(obj, "activeRecipeId");
@@ -425,6 +427,20 @@ Project Project::fromJson(const QJsonObject &obj, QString *error)
     for (const QJsonValue &v : arr) {
         if (v.isObject()) {
             project.recipes.push_back(Recipe::fromJson(v.toObject()));
+        }
+    }
+
+    // 1.0 → 1.1：卡尺 φ 从 Qt(y 向下) 转为 HALCON rectangle2（取反）
+    if (loadedVersion == QLatin1String("1.0") || loadedVersion.isEmpty()) {
+        for (Recipe &recipe : project.recipes) {
+            for (MeasureItem &m : recipe.measures) {
+                if (m.type == MeasureType::CaliperWidth
+                    || m.type == MeasureType::CaliperDiameter
+                    || m.type == MeasureType::FindLine
+                    || m.type == MeasureType::FindCircle) {
+                    m.geometry.phi = -m.geometry.phi;
+                }
+            }
         }
     }
 

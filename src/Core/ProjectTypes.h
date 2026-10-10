@@ -20,7 +20,8 @@ namespace Me {
 /// 工程文件 format 字段标识
 inline constexpr char kProjectFormat[] = "mexp";
 /// 当前支持的工程文件版本号
-inline constexpr char kProjectFileVersion[] = "1.0";
+/** 1.1：卡尺 geometry.phi 改为 HALCON rectangle2 角（相对 1.0 的 Qt 角取反） */
+inline constexpr char kProjectFileVersion[] = "1.1";
 /// 文件对话框过滤器
 inline constexpr char kProjectFileFilter[] =
     "MeasureExpert 工程 (*.mexp.json);;所有文件 (*.*)";
@@ -69,13 +70,13 @@ struct AlignmentConfig {
 /**
  * 卡尺/圆弧几何参数（模板坐标系，经定位 HomMat2D 变换到图像坐标）。
  *
- * 找线/测宽：phi 为卡尺长轴方向；length1=半长，length2=半宽。
+ * 找线/测宽：phi 为 HALCON rectangle2 长轴角（rad）；length1=半长，length2=半宽。
  * 找圆/测径：phi 为圆弧起始角；length1=半径；length2=环宽一半；angleExtent=弧角范围。
  */
 struct CaliperGeometry {
     double row = 0.0;
     double column = 0.0;
-    double phi = 0.0;     // rad，相对模板；找圆时为圆弧起始角
+    double phi = 0.0;     // HALCON rectangle2 角（rad）；找圆时为圆弧起始角
     double length1 = 50.0; // 矩形半长 / 圆半径
     double length2 = 20.0; // 矩形半宽 / 圆环半宽(AnnulusRadius)
     double angleExtent = 6.283185307179586; // 找圆：弧角范围（rad），默认整周
