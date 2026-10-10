@@ -85,6 +85,8 @@ qt_add_executable(MeasureExpert
     src/Core/HalconCameraBackend.h
     src/Core/CameraHub.cpp
     src/Core/CameraHub.h
+    src/Core/SehGuard.cpp
+    src/Core/SehGuard.h
     src/Alg/AlgTypes.h
     src/Alg/ITool.h
     src/Alg/ToolCommon.h
@@ -163,6 +165,9 @@ target_link_libraries(MeasureExpert PRIVATE
     "${HALCON_LIB_DIR}/halconcpp.lib"
     "${HALCON_LIB_DIR}/halcon.lib"
 )
+if(WIN32)
+    target_link_libraries(MeasureExpert PRIVATE dbghelp)
+endif()
 
 # 将 opencv_world*.dll 拷到运行目录（OpenCV_DIR 可能是 build 根或 x64/vcXX/lib）
 if(WIN32)

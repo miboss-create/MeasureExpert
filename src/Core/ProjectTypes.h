@@ -99,6 +99,8 @@ struct MeasureItem {
     double lower = 0.0;    ///< 下偏差（相对标称，通常为负）
     QString unit = QStringLiteral("px");
     int decimals = 3;
+    /// 已在主图确认过卡尺/找圆 ROI。未确认的项不参与试跑，也不叠默认框。
+    bool roiDefined = false;
 
     QJsonObject toJson() const;
     static MeasureItem fromJson(const QJsonObject &obj);

@@ -122,6 +122,8 @@ private:
     void setupRunEngine();
     /** 析构/关窗前安全停止工作线程并 deleteLater RunEngine */
     void shutdownRunEngine();
+    /** 关窗与析构共用：停线程、相机、断开日志，只执行一次 */
+    void teardownOnExit();
 
     // ---- 窗口与列表刷新 ----
     void updateWindowTitle();
@@ -191,6 +193,10 @@ private:
     QAction *m_previewCameraAction = nullptr;
     QAction *m_disconnectCameraAction = nullptr;
     RoiEditMode m_roiEditMode = RoiEditMode::None;
+    /** 进入画 ROI 时锁定的测量项。确认时写回这一项，不跟随后来的列表选中行。 */
+    QString m_roiEditMeasureId;
+    /** 刷新列表后要选中的测量项（添加后选中新建项） */
+    QString m_pendingSelectMeasureId;
     AppMode m_appMode = AppMode::Edit;
 
     QLabel *m_activeRecipeLabel = nullptr;
@@ -214,6 +220,7 @@ private:
     bool m_continuous = false;      ///< 连续运行（文件夹序列或相机连续采图）
     bool m_stopRequested = false;   ///< 用户点停止，当前周期结束后不再派发
     bool m_continuousFromCamera = false; ///< 连续运行使用相机 grab 而非缩略图翻页
+    bool m_exitTornDown = false;    ///< closeEvent/析构已做过退出清理
     QString m_currentImageStatus;
     QString m_currentImagePath;
     QImage m_currentImage;

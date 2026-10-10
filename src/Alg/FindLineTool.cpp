@@ -32,14 +32,15 @@ QVector<Point2D> sampleEdgePoints(const HalconCpp::HImage &gray,
     const int samples = qBound(5, static_cast<int>((length2 * 2.0) / 6.0), 31);
     const double step = (2.0 * length2) / static_cast<double>(samples - 1);
     const double subL2 = qBound(1.0, step * 0.45, 6.0);
-    // 第二主轴（沿线）：(drow, dcol) = (cos φ, -sin φ)
+    // HALCON rectangle2 的 Length2 轴：(drow, dcol) = (cos φ, sin φ)
+    // φ≈0 时 sin 为 0，符号看不出来；旋转后必须用 +sin，否则采样离开引脚排
     const double s = qSin(phi);
     const double c = qCos(phi);
 
     for (int i = 0; i < samples; ++i) {
         const double t = -length2 + i * step;
         const double row = rowC + t * c;
-        const double col = colC - t * s;
+        const double col = colC + t * s;
         HTuple handle;
         try {
             GenMeasureRectangle2(row, col, phi, length1, subL2,

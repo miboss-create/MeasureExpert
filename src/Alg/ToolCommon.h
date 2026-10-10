@@ -91,6 +91,44 @@ inline double qtPhiToHalcon(double phiQt)
     return -phiQt;
 }
 
+/** 卡尺类测量是否需要主图画 ROI */
+inline bool measureNeedsRoi(MeasureType t)
+{
+    return t == MeasureType::CaliperWidth || t == MeasureType::CaliperDiameter
+        || t == MeasureType::FindLine || t == MeasureType::FindCircle;
+}
+
+/** 添加测量项时的占位框，或结构体默认框。确认 ROI 后几何会离开这两个值。 */
+inline bool isUnsetCaliperGeometry(const CaliperGeometry &g)
+{
+    const bool placeholder = qAbs(g.row) < 1e-3
+        && qAbs(g.column - 60.0) < 1e-3
+        && qAbs(g.phi) < 1e-3
+        && qAbs(g.length1 - 40.0) < 1e-3
+        && qAbs(g.length2 - 8.0) < 1e-3;
+    const bool defaults = qAbs(g.row) < 1e-3
+        && qAbs(g.column) < 1e-3
+        && qAbs(g.phi) < 1e-3
+        && qAbs(g.length1 - 50.0) < 1e-3
+        && qAbs(g.length2 - 20.0) < 1e-3;
+    return placeholder || defaults;
+}
+
+/**
+ * 未在主图确认 ROI。
+ * roiDefined 为真，或几何已不是占位框，都视为已画过。
+ */
+inline bool measureRoiMissing(const MeasureItem &item)
+{
+    if (!measureNeedsRoi(item.type)) {
+        return false;
+    }
+    if (item.roiDefined) {
+        return false;
+    }
+    return isUnsetCaliperGeometry(item.geometry);
+}
+
 /** QImage → 单通道 HImage（彩色则 Rgb1ToGray） */
 inline HalconCpp::HImage toGrayHImage(QImage image)
 {

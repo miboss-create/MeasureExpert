@@ -17,10 +17,13 @@ class LogWidget : public QWidget
     Q_OBJECT
 public:
     explicit LogWidget(QWidget *parent = nullptr);
+    ~LogWidget() override;
 
     /** 便捷入口：经 qInfo 输出，走 LogSink 统一管道 */
     void appendInfo(const QString &text);
     void clearView();
+    /** 关窗前断开 LogSink，避免排队日志打到已销毁的 QTextBrowser */
+    void detachFromLogSink();
 
 private slots:
     void onClearClicked();

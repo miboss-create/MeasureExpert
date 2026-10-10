@@ -6,6 +6,7 @@
 #include "Core/ProjectTypes.h"
 
 #include <QUuid>
+#include <QtMath>
 
 namespace Me {
 namespace {
@@ -232,8 +233,31 @@ QJsonObject MeasureItem::toJson() const
     obj.insert(QStringLiteral("lower"), lower);
     obj.insert(QStringLiteral("unit"), unit);
     obj.insert(QStringLiteral("decimals"), decimals);
+    obj.insert(QStringLiteral("roiDefined"), roiDefined);
     return obj;
 }
+
+namespace {
+
+bool measureTypeNeedsRoi(MeasureType type)
+{
+    return type == MeasureType::CaliperWidth
+        || type == MeasureType::CaliperDiameter
+        || type == MeasureType::FindLine
+        || type == MeasureType::FindCircle;
+}
+
+/** 添加测量项时写入的占位几何，不能当成用户画过的 ROI */
+bool isPlaceholderGeometry(const CaliperGeometry &g)
+{
+    return qAbs(g.row) < 1e-6
+        && qAbs(g.column - 60.0) < 1e-6
+        && qAbs(g.phi) < 1e-6
+        && qAbs(g.length1 - 40.0) < 1e-6
+        && qAbs(g.length2 - 8.0) < 1e-6;
+}
+
+} // namespace
 
 MeasureItem MeasureItem::fromJson(const QJsonObject &obj)
 {
@@ -249,6 +273,11 @@ MeasureItem MeasureItem::fromJson(const QJsonObject &obj)
     item.lower = jsonDouble(obj, "lower", 0.0);
     item.unit = jsonString(obj, "unit", QStringLiteral("px"));
     item.decimals = jsonInt(obj, "decimals", 3);
+    if (obj.contains(QStringLiteral("roiDefined"))) {
+        item.roiDefined = obj.value(QStringLiteral("roiDefined")).toBool();
+    } else if (measureTypeNeedsRoi(item.type)) {
+        item.roiDefined = !isPlaceholderGeometry(item.geometry);
+    }
     return item;
 }
 

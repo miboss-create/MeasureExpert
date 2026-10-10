@@ -22,8 +22,12 @@ public slots:
                  const Recipe &recipe,
                  const CalibrationConfig &calibration,
                  const QString &projectDir);
-    /** 必须在本对象所属线程的事件循环里调用，避免跨线程 delete */
-    void shutdown() { deleteLater(); }
+    /**
+     * 必须在本对象所属线程的事件循环里调用。
+     * 用 delete this 同步销毁（配合 BlockingQueuedConnection），
+     * 避免 quit 之后 deleteLater 来不及处理导致悬空对象。
+     */
+    void shutdown() { delete this; }
 
 signals:
     void cycleFinished(const Me::CycleResult &result);

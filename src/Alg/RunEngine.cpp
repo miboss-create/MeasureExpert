@@ -2,6 +2,7 @@
 
 #include "Alg/MeasureService.h"
 #include "Alg/ToleranceService.h"
+#include "Alg/ToolCommon.h"
 #include "Alg/ToolRegistry.h"
 
 #include <QElapsedTimer>
@@ -66,6 +67,22 @@ void RunEngine::runOnce(const QImage &image,
     }
 
     cycle.measures = MeasureService::runAll(image, recipe, cycle.alignment, calibration);
+    if (cycle.measures.isEmpty()) {
+        bool waitingRoi = false;
+        for (const MeasureItem &item : recipe.measures) {
+            if (ToolCommon::measureRoiMissing(item)) {
+                waitingRoi = true;
+                break;
+            }
+        }
+        if (waitingRoi) {
+            cycle.reason = QStringLiteral("请先为测量项画卡尺 ROI");
+            cycle.totalOk = false;
+            cycle.elapsedMs = static_cast<int>(timer.elapsed());
+            emit cycleFinished(cycle);
+            return;
+        }
+    }
     QString reason;
     cycle.totalOk = ToleranceService::judgeAll(cycle.measures, &reason);
     cycle.reason = reason;

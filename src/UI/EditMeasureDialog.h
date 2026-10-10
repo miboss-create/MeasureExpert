@@ -42,6 +42,7 @@ private:
     void onAccepted();
 
     QString m_id;
+    bool m_roiDefined = false;
     QVector<MeasureItem> m_siblings;  ///< 同配方其他测量项，供引用下拉填充
     MeasureItem m_acceptedItem;
     QLineEdit *m_name = nullptr;

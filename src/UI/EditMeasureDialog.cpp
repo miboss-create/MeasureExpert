@@ -63,6 +63,7 @@ EditMeasureDialog::EditMeasureDialog(const MeasureItem &item,
                                      QWidget *parent)
     : QDialog(parent)
     , m_id(item.id)
+    , m_roiDefined(item.roiDefined)
     , m_siblings(siblings)
     , m_acceptedItem(item)
 {
@@ -224,6 +225,7 @@ MeasureItem EditMeasureDialog::buildItem() const
     item.decimals = m_decimals ? m_decimals->value() : 3;
     item.unit = (item.type == MeasureType::Angle) ? QStringLiteral("deg")
                                                   : QStringLiteral("px");
+    item.roiDefined = m_roiDefined;
     return item;
 }
 

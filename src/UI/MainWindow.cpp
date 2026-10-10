@@ -35,6 +35,7 @@
 #include <QColor>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <cstdio>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -74,6 +75,21 @@ using Me::MeasureType;
 using Me::ProjectService;
 using Me::RunEngine;
 using Me::TrainAlignmentDialog;
+
+namespace {
+
+void exitTrace(const char *step)
+{
+    FILE *f = nullptr;
+    if (fopen_s(&f, "D:\\learning\\MeasureExpert_runtime\\log\\exit_trace.txt", "a") != 0 || !f) {
+        return;
+    }
+    fprintf(f, "%s\n", step);
+    fflush(f);
+    fclose(f);
+}
+
+} // namespace
 
 // ---- 构造与生命周期 ----
 
@@ -136,10 +152,9 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
-    if (m_cameraHub) {
-        m_cameraHub->shutdown();
-    }
-    shutdownRunEngine();
+    exitTrace("dtor:begin");
+    teardownOnExit();
+    exitTrace("dtor:afterTeardown");
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -153,11 +168,8 @@ void MainWindow::closeEvent(QCloseEvent *event)
         event->ignore();
         return;
     }
-    // 必须在窗口/Qt 析构前释放相机：预览定时器 + VideoCapture 留到 ~QObject 易异常
-    if (m_cameraHub) {
-        disconnect(m_cameraHub, nullptr, this, nullptr);
-        m_cameraHub->shutdown();
-    }
+    // 关窗前先停工作线程/相机/日志，避免析构过程中还有排队槽打到半销毁对象
+    teardownOnExit();
     event->accept();
 }
 
@@ -253,6 +265,7 @@ void MainWindow::leaveRoiEditMode(bool clearRoi)
         return;
     }
     m_roiEditMode = RoiEditMode::None;
+    m_roiEditMeasureId.clear();
     m_imageView->setRoiEditEnabled(false);
     if (clearRoi) {
         m_imageView->clearRoi();
@@ -363,6 +376,40 @@ bool MainWindow::imageRoiToMeasureGeometry(const QPointF &centerImg,
 
 // ---- RunEngine 工作线程 ----
 
+void MainWindow::teardownOnExit()
+{
+    if (m_exitTornDown) {
+        return;
+    }
+    m_exitTornDown = true;
+    exitTrace("teardown:begin");
+
+    m_stopRequested = true;
+    m_continuous = false;
+    m_continuousFromCamera = false;
+
+    if (m_logWidget) {
+        m_logWidget->detachFromLogSink();
+        exitTrace("teardown:logDetached");
+    }
+    if (m_cameraHub) {
+        disconnect(m_cameraHub, nullptr, this, nullptr);
+        m_cameraHub->shutdown();
+        exitTrace("teardown:cameraDown");
+    }
+    if (m_projectService) {
+        disconnect(m_projectService, nullptr, this, nullptr);
+    }
+    // 丢掉已排队、指向本窗口的槽调用，避免半销毁时再进 refresh*
+    QCoreApplication::removePostedEvents(this);
+    if (m_logWidget) {
+        QCoreApplication::removePostedEvents(m_logWidget);
+    }
+    exitTrace("teardown:beforeRunEngine");
+    shutdownRunEngine();
+    exitTrace("teardown:done");
+}
+
 void MainWindow::shutdownRunEngine()
 {
     if (!m_runEngine && !m_runThread) {
@@ -377,20 +424,41 @@ void MainWindow::shutdownRunEngine()
     if (engine) {
         disconnect(engine, nullptr, this, nullptr);
         disconnect(this, nullptr, engine, nullptr);
-        if (thread && thread->isRunning()) {
-            // 在工作线程里排队删除，禁止主线程直接 delete
-            QMetaObject::invokeMethod(engine, &RunEngine::shutdown, Qt::BlockingQueuedConnection);
+    }
+    if (!thread) {
+        delete engine;
+        return;
+    }
+
+    // 不挂父对象：在工作线程事件循环里同步 delete this，再 quit/wait
+    if (engine && thread->isRunning()) {
+        exitTrace("runEngine:invokeShutdown");
+        const bool ok = QMetaObject::invokeMethod(engine, &RunEngine::shutdown,
+                                                  Qt::BlockingQueuedConnection);
+        exitTrace(ok ? "runEngine:shutdownOk" : "runEngine:shutdownFail");
+        engine = nullptr; // 已在工作线程 delete this
+    } else if (engine) {
+        delete engine;
+        engine = nullptr;
+        exitTrace("runEngine:deletedOnMain");
+    }
+
+    if (thread->isRunning()) {
+        exitTrace("runEngine:quit");
+        thread->quit();
+        if (!thread->wait(5000)) {
+            exitTrace("runEngine:terminate");
+            thread->terminate();
+            thread->wait(2000);
         }
     }
-    if (thread && thread->isRunning()) {
-        thread->quit();
-        thread->wait(5000);
-    }
+    delete thread;
+    exitTrace("runEngine:threadDeleted");
 }
 
 void MainWindow::setupRunEngine()
 {
-    m_runThread = new QThread(this);
+    m_runThread = new QThread();
     m_runEngine = new RunEngine();
     m_runEngine->moveToThread(m_runThread);
 
@@ -725,7 +793,11 @@ void MainWindow::refreshRecipeList()
 void MainWindow::refreshMeasureList()
 {
     m_updatingLists = true;
-    const QString keepMeasureId = selectedMeasureId();
+    QString keepMeasureId = selectedMeasureId();
+    if (!m_pendingSelectMeasureId.isEmpty()) {
+        keepMeasureId = m_pendingSelectMeasureId;
+        m_pendingSelectMeasureId.clear();
+    }
     m_resultTable->setRowCount(0);
 
     const auto *recipe = m_projectService->activeRecipe();
@@ -741,8 +813,11 @@ void MainWindow::refreshMeasureList()
         const auto &m = recipe->measures.at(i);
         const int dec = qBound(0, m.decimals, 6);
         m_resultTable->insertRow(i);
-        auto *nameItem = new QTableWidgetItem(
-            QStringLiteral("%1  %2").arg(m.name, Me::measureTypeToString(m.type)));
+        QString label = QStringLiteral("%1  %2").arg(m.name, Me::measureTypeToString(m.type));
+        if (Me::ToolCommon::measureRoiMissing(m)) {
+            label += tr("  未画ROI");
+        }
+        auto *nameItem = new QTableWidgetItem(label);
         nameItem->setData(Qt::UserRole, m.id);
         nameItem->setToolTip(m.name);
         m_resultTable->setItem(i, 0, nameItem);
@@ -801,6 +876,7 @@ void MainWindow::refreshMeasureProperties()
     text += tr("上公差: %1\n").arg(m.upper, 0, 'f', dec);
     text += tr("下公差: %1\n").arg(m.lower, 0, 'f', dec);
     text += tr("小数位: %1\n").arg(dec);
+    text += tr("ROI: %1\n").arg(m.roiDefined ? tr("已确认") : tr("未画"));
     text += tr("几何(相对模板):\n");
     text += QStringLiteral("  row=%1  col=%2  phi=%3\n")
                 .arg(m.geometry.row, 0, 'f', 3)
@@ -1362,7 +1438,10 @@ void MainWindow::onDrawMeasureRoi()
     }
 
     const QString recipeId = selectedRecipeId();
-    const QString measureId = selectedMeasureId();
+    QString measureId = selectedMeasureId();
+    if (m_roiEditMode == RoiEditMode::MeasureCaliper && !m_roiEditMeasureId.isEmpty()) {
+        measureId = m_roiEditMeasureId;
+    }
     if (recipeId.isEmpty() || measureId.isEmpty()) {
         QMessageBox::information(this, tr("提示"), tr("请先选择测量项。"));
         return;
@@ -1403,13 +1482,12 @@ void MainWindow::onDrawMeasureRoi()
         qreal seedL1 = 0.0;
         qreal seedL2 = 0.0;
         bool haveSeed = false;
-        if (followPose && align.ok) {
+        if (measureCopy.roiDefined && followPose && align.ok) {
             haveSeed = measureGeometryToImageRoi(measureCopy.geometry, align, measureCopy.type,
                                                  &seedCenter, &seedPhi, &seedL1, &seedL2);
             qInfo().noquote() << tr("已按当前定位位姿投影卡尺 (score=%1)")
                                      .arg(align.score, 0, 'f', 3);
-        } else if (!followPose
-                   && (measureCopy.geometry.length1 > 1.0 || measureCopy.geometry.length2 > 1.0)) {
+        } else if (measureCopy.roiDefined && !followPose) {
             haveSeed = measureGeometryToImageRoi(measureCopy.geometry, {}, measureCopy.type,
                                                  &seedCenter, &seedPhi, &seedL1, &seedL2);
             qInfo().noquote() << tr("已载入图像坐标 ROI（未启用定位跟随）");
@@ -1437,7 +1515,9 @@ void MainWindow::onDrawMeasureRoi()
                                      ? RoiRectItem::Shape::Circle
                                      : RoiRectItem::Shape::Rectangle);
         m_imageView->setRoiOriented(seedCenter, seedPhi, seedL1, seedL2);
+        m_roiEditMeasureId = measureCopy.id;
         enterRoiEditMode(true);
+        qInfo().noquote() << tr("正在编辑测量项「%1」的 ROI").arg(measureCopy.name);
         return;
     }
 
@@ -1450,7 +1530,7 @@ void MainWindow::onDrawMeasureRoi()
     }
 
     // --- ROI 确认：再次定位，将图像定向 ROI 逆变换为相对模板 CaliperGeometry ---
-    qInfo().noquote() << tr("确认卡尺 ROI...");
+    qInfo().noquote() << tr("确认测量项「%1」的卡尺 ROI").arg(measureCopy.name);
     Me::AlignmentResult align;
     if (followPose) {
         align = Me::AlignmentService::find(m_currentImage, alignCfg, projectDir(), false);
@@ -1506,10 +1586,21 @@ void MainWindow::onDrawMeasureRoi()
 
     Me::MeasureItem item = measureCopy;
     item.geometry = geo;
+    item.roiDefined = true;
 
     // 先退出 ROI 模式，再写回（避免 structureChanged / 刷新与 ROI 交互冲突）
     leaveRoiEditMode(false);
-    m_projectService->updateMeasure(recipeId, item);
+    if (!m_projectService->updateMeasure(recipeId, item)) {
+        qWarning().noquote() << tr("测量 ROI 写回失败: %1").arg(item.name);
+        return;
+    }
+    if (auto *storedRecipe = m_projectService->activeRecipe()) {
+        const int storedIdx = storedRecipe->indexOfMeasure(item.id);
+        if (storedIdx >= 0) {
+            storedRecipe->measures[storedIdx].roiDefined = true;
+            storedRecipe->measures[storedIdx].geometry = item.geometry;
+        }
+    }
     refreshMeasureProperties();
 
     // 轻量预览：只画当前卡尺，不叠模型轮廓（避免大量 XLD 点导致崩溃）
@@ -1534,6 +1625,43 @@ void MainWindow::onDrawMeasureRoi()
     mr.angleExtent = geo.angleExtent;
     mr.message = tr("测量ROI已更新");
     preview.measures.push_back(mr);
+    if (const auto *recipeNow = m_projectService->project().findRecipe(recipeId)) {
+        const Me::AlignmentResult sibAlign = align.ok ? align : Me::AlignmentResult{};
+        if (!followPose || align.ok) {
+            for (const Me::MeasureItem &sib : recipeNow->measures) {
+                if (sib.id == item.id || !sib.roiDefined
+                    || !Me::ToolCommon::measureNeedsRoi(sib.type)) {
+                    continue;
+                }
+                QPointF center;
+                qreal phi = 0.0;
+                qreal len1 = 0.0;
+                qreal len2 = 0.0;
+                if (!measureGeometryToImageRoi(sib.geometry, sibAlign, sib.type,
+                                               &center, &phi, &len1, &len2)) {
+                    continue;
+                }
+                Me::MeasureResult other;
+                other.id = sib.id;
+                other.name = sib.name;
+                other.type = sib.type;
+                other.ok = true;
+                other.imageRow = center.y();
+                other.imageCol = center.x();
+                other.imagePhi = (sib.type == MeasureType::FindCircle)
+                    ? 0.0
+                    : Me::ToolCommon::qtPhiToHalcon(phi);
+                other.length1 = (sib.type == MeasureType::FindCircle)
+                    ? sib.geometry.length1
+                    : len1;
+                other.length2 = (sib.type == MeasureType::FindCircle)
+                    ? sib.geometry.length2
+                    : len2;
+                other.angleExtent = sib.geometry.angleExtent;
+                preview.measures.push_back(other);
+            }
+        }
+    }
     preview.totalOk = true;
     preview.reason = tr("测量ROI已写入");
     m_imageView->setImage(Me::ResultOverlay::render(m_currentImage, preview));
@@ -1907,6 +2035,8 @@ void MainWindow::onAddMeasure()
             return;
         }
         item.id = id;
+        item.roiDefined = false;
+        m_pendingSelectMeasureId = id;
         m_projectService->updateMeasure(recipeId, item);
         updateWindowTitle();
         qInfo().noquote() << tr("已添加测量项: %1 (%2)")

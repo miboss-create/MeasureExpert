@@ -18,6 +18,19 @@ LogWidget::LogWidget(QWidget *parent)
     initWidget();
 }
 
+LogWidget::~LogWidget()
+{
+    detachFromLogSink();
+}
+
+void LogWidget::detachFromLogSink()
+{
+    if (!m_browser) {
+        return;
+    }
+    disconnect(LogSink::instance(), nullptr, m_browser, nullptr);
+}
+
 bool LogWidget::initWidget()
 {
     m_browser = new QTextBrowser(this);

@@ -19,8 +19,16 @@ void messageHandler(QtMsgType type, const QMessageLogContext &context, const QSt
 {
     Q_UNUSED(context);
 
-    static QMutex mutex;
-    QMutexLocker lock(&mutex);
+    // 槽里若再打日志，避免重入死锁/半销毁 UI
+    thread_local int depth = 0;
+    if (depth > 0) {
+        return;
+    }
+    struct DepthGuard {
+        int *d;
+        explicit DepthGuard(int *p) : d(p) { ++(*d); }
+        ~DepthGuard() { --(*d); }
+    } depthGuard(&depth);
 
     QString level;
     QString color = QStringLiteral("red");
@@ -53,29 +61,35 @@ void messageHandler(QtMsgType type, const QMessageLogContext &context, const QSt
     const QString html = QStringLiteral("<font color=\"%1\">%2</font>")
                              .arg(color, plain.toHtmlEscaped());
 
-    QDir().mkpath(sink->logDirPath());
-    QFile file(sink->logFilePath());
-    if (file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
-        QTextStream stream(&file);
-        stream.setEncoding(QStringConverter::Utf8);
-        stream << plain << '\n';
-        file.flush();
-        const qint64 size = file.size();
-        file.close();
+    {
+        static QMutex mutex;
+        QMutexLocker lock(&mutex);
 
-        // 单文件超过约 1MB 时轮转，避免无限增大
-        if (size >= 1024 * 1024) {
-            for (int i = 1; i < 100; ++i) {
-                const QString rotated = sink->logDirPath()
-                                        + QStringLiteral("log_%1.txt").arg(i);
-                if (!QFile::exists(rotated) || QFile(rotated).size() < 4) {
-                    QFile::rename(sink->logFilePath(), rotated);
-                    break;
+        QDir().mkpath(sink->logDirPath());
+        QFile file(sink->logFilePath());
+        if (file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+            QTextStream stream(&file);
+            stream.setEncoding(QStringConverter::Utf8);
+            stream << plain << '\n';
+            file.flush();
+            const qint64 size = file.size();
+            file.close();
+
+            // 单文件超过约 1MB 时轮转，避免无限增大
+            if (size >= 1024 * 1024) {
+                for (int i = 1; i < 100; ++i) {
+                    const QString rotated = sink->logDirPath()
+                                            + QStringLiteral("log_%1.txt").arg(i);
+                    if (!QFile::exists(rotated) || QFile(rotated).size() < 4) {
+                        QFile::rename(sink->logFilePath(), rotated);
+                        break;
+                    }
                 }
             }
         }
     }
 
+    // 先解锁再发信号，避免关窗时排队槽重入日志持锁
     emit sink->messageReady(plain);
     emit sink->htmlMessageReady(html);
 }
