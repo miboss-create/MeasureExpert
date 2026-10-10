@@ -947,6 +947,11 @@ void MainWindow::applyCycleResult(const Me::CycleResult &result)
             valueItem->setText(QStringLiteral("--"));
             judgeItem->setText(QStringLiteral("-"));
             judgeItem->setForeground(QBrush());
+            for (int col = 0; col < m_resultTable->columnCount(); ++col) {
+                if (auto *cell = m_resultTable->item(row, col)) {
+                    cell->setBackground(QBrush());
+                }
+            }
             continue;
         }
         const int dec = qBound(0, found->decimals, 6);
@@ -954,11 +959,11 @@ void MainWindow::applyCycleResult(const Me::CycleResult &result)
                                ? QStringLiteral("%1 %2").arg(found->value, 0, 'f', dec).arg(found->unit)
                                : QStringLiteral("--"));
         judgeItem->setText(found->ok ? QStringLiteral("OK") : QStringLiteral("NG"));
-        judgeItem->setForeground(found->ok ? QColor(30, 140, 55) : QColor(190, 40, 40));
-        const QColor rowColor = found->ok ? QColor(232, 245, 233) : QColor(255, 232, 232);
+        // 深色界面下不整行铺浅粉/浅绿底，只改判定列字色，避免白字看不清
+        judgeItem->setForeground(found->ok ? QColor(80, 220, 120) : QColor(255, 110, 110));
         for (int col = 0; col < m_resultTable->columnCount(); ++col) {
             if (auto *cell = m_resultTable->item(row, col)) {
-                cell->setBackground(rowColor);
+                cell->setBackground(QBrush());
             }
         }
     }
