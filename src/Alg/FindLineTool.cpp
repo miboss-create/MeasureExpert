@@ -22,16 +22,21 @@ QVector<Point2D> sampleEdgePoints(const HalconCpp::HImage &gray,
                                   double phi,
                                   double length1,
                                   double length2,
-                                  double threshold)
+                                  double sigma,
+                                  double threshold,
+                                  double samplePitchPx)
 {
     QVector<Point2D> pts;
     if (length1 < 1.0 || length2 < 1.0) {
         return pts;
     }
 
-    const int samples = qBound(5, static_cast<int>((length2 * 2.0) / 6.0), 31);
+    const double pitch = qBound(2.0, samplePitchPx, 40.0);
+    const int samples = qBound(5, static_cast<int>((length2 * 2.0) / pitch), 61);
     const double step = (2.0 * length2) / static_cast<double>(samples - 1);
     const double subL2 = qBound(1.0, step * 0.45, 6.0);
+    const double sig = qBound(0.4, sigma, 8.0);
+    const double thr = qBound(1.0, threshold, 255.0);
     // HALCON rectangle2 的 Length2 轴：(drow, dcol) = (cos φ, sin φ)
     // φ≈0 时 sin 为 0，符号看不出来；旋转后必须用 +sin，否则采样离开引脚排
     const double s = qSin(phi);
@@ -41,12 +46,18 @@ QVector<Point2D> sampleEdgePoints(const HalconCpp::HImage &gray,
         const double t = -length2 + i * step;
         const double row = rowC + t * c;
         const double col = colC + t * s;
+        // 中心明显越界则跳过，避免 HALCON 在图像外建卡尺
+        if (row < -length1 || col < -length1
+            || row > static_cast<double>(height) + length1
+            || col > static_cast<double>(width) + length1) {
+            continue;
+        }
         HTuple handle;
         try {
             GenMeasureRectangle2(row, col, phi, length1, subL2,
                                  width, height, "bilinear", &handle);
             HTuple rowEdge, colEdge, amplitude, distance;
-            MeasurePos(gray, handle, 1.0, threshold, "all", "all",
+            MeasurePos(gray, handle, sig, thr, "all", "all",
                        &rowEdge, &colEdge, &amplitude, &distance);
             CloseMeasure(handle);
             handle = HTuple();
@@ -85,7 +96,8 @@ QVector<Point2D> sampleEdgePoints(const HalconCpp::HImage &gray,
 
 bool fitLine(const QVector<Point2D> &pts, LineGeom *lineOut)
 {
-    if (!lineOut || pts.size() < 2) {
+    // tukey 拟合至少需要 3 点才稳定；2 点虽可连线但对噪声过敏感
+    if (!lineOut || pts.size() < 3) {
         return false;
     }
     try {
@@ -172,7 +184,8 @@ MeasureResult FindLineTool::run(const MeasureItem &item, const ToolContext &ctx)
         // 2) 卡尺内采边缘点 → 拟合直线
         const QVector<Point2D> edgePts = sampleEdgePoints(
             gray, width, height, rowImg, colImg, phiImg,
-            item.geometry.length1, item.geometry.length2, 10.0);
+            item.geometry.length1, item.geometry.length2,
+            item.edgeSigma, item.edgeThreshold, item.samplePitchPx);
 
         MeasureResult result = baseResult(item);
         result.imageRow = rowImg;

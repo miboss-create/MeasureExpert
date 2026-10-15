@@ -11,9 +11,6 @@
 #include <QApplication>
 #include <QIcon>
 #include <QStyleFactory>
-#include <QTimer>
-
-#include <cstdio>
 
 int main(int argc, char *argv[])
 {
@@ -30,48 +27,14 @@ int main(int argc, char *argv[])
     const QIcon appIcon(QStringLiteral(":/icons/app_icon.png"));
     QApplication::setWindowIcon(appIcon);
 
-    const bool autoQuit = app.arguments().contains(QStringLiteral("--auto-quit"));
+    MainWindow window;
+    window.setWindowIcon(appIcon);
+    window.show();
 
-    int code = 0;
-    {
-        MainWindow window;
-        window.setWindowIcon(appIcon);
-        window.show();
+    qInfo().noquote() << QObject::tr("MeasureExpert 已启动（主图：Qt ImageView）");
+    qInfo().noquote() << QObject::tr("日志目录: %1").arg(LogSink::instance()->logDirPath());
 
-        qInfo().noquote() << QObject::tr("MeasureExpert 已启动（主图：Qt ImageView）");
-        qInfo().noquote() << QObject::tr("日志目录: %1").arg(LogSink::instance()->logDirPath());
-
-        if (autoQuit) {
-            QTimer::singleShot(800, &window, &QWidget::close);
-        }
-
-        code = app.exec();
-        {
-            FILE *f = nullptr;
-            if (fopen_s(&f, "D:\\learning\\MeasureExpert_runtime\\log\\exit_trace.txt", "a") == 0 && f) {
-                fprintf(f, "main:afterExec code=%d\n", code);
-                fflush(f);
-                fclose(f);
-            }
-        }
-    } // MainWindow 在此析构，QApplication 仍存活
-
-    {
-        FILE *f = nullptr;
-        if (fopen_s(&f, "D:\\learning\\MeasureExpert_runtime\\log\\exit_trace.txt", "a") == 0 && f) {
-            fprintf(f, "main:afterWindowDestroyed\n");
-            fflush(f);
-            fclose(f);
-        }
-    }
+    const int code = app.exec();
     LogSink::instance()->uninstallMessageHandler();
-    {
-        FILE *f = nullptr;
-        if (fopen_s(&f, "D:\\learning\\MeasureExpert_runtime\\log\\exit_trace.txt", "a") == 0 && f) {
-            fprintf(f, "main:exit\n");
-            fflush(f);
-            fclose(f);
-        }
-    }
     return code;
 }

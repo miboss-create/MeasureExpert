@@ -65,6 +65,10 @@ public:
     bool removeMeasure(const QString &recipeId, const QString &measureId);
     bool renameMeasure(const QString &recipeId, const QString &measureId, const QString &name);
     bool updateMeasure(const QString &recipeId, const MeasureItem &item);
+    /** 调整测量项顺序（派生项须仍排在被引用项之后，由调用方保证） */
+    bool moveMeasure(const QString &recipeId, int fromIndex, int toIndex);
+    /** 按 id 列表重排测量项；id 集合须与现有一致 */
+    bool reorderMeasures(const QString &recipeId, const QStringList &orderedIds);
 
     void setCalibration(const CalibrationConfig &config);
     bool updateAlignment(const QString &recipeId, const AlignmentConfig &config);

@@ -102,6 +102,13 @@ struct MeasureItem {
     /// 已在主图确认过卡尺/找圆 ROI。未确认的项不参与试跑，也不叠默认框。
     bool roiDefined = false;
 
+    /// 边缘检测平滑（MeasurePos / MeasurePairs 的 Sigma），越大越抗噪
+    double edgeSigma = 1.5;
+    /// 边缘幅度阈值（Threshold），越小越灵敏、也越易吸干扰边
+    double edgeThreshold = 20.0;
+    /// 找线/找圆沿线（或圆周）采样步长（像素）；越小点越密
+    double samplePitchPx = 6.0;
+
     QJsonObject toJson() const;
     static MeasureItem fromJson(const QJsonObject &obj);
     static MeasureItem createDefault(const QString &name);

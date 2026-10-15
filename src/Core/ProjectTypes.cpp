@@ -234,6 +234,9 @@ QJsonObject MeasureItem::toJson() const
     obj.insert(QStringLiteral("unit"), unit);
     obj.insert(QStringLiteral("decimals"), decimals);
     obj.insert(QStringLiteral("roiDefined"), roiDefined);
+    obj.insert(QStringLiteral("edgeSigma"), edgeSigma);
+    obj.insert(QStringLiteral("edgeThreshold"), edgeThreshold);
+    obj.insert(QStringLiteral("samplePitchPx"), samplePitchPx);
     return obj;
 }
 
@@ -277,6 +280,22 @@ MeasureItem MeasureItem::fromJson(const QJsonObject &obj)
         item.roiDefined = obj.value(QStringLiteral("roiDefined")).toBool();
     } else if (measureTypeNeedsRoi(item.type)) {
         item.roiDefined = !isPlaceholderGeometry(item.geometry);
+    }
+    const double thrDefault =
+        (item.type == MeasureType::FindLine || item.type == MeasureType::FindCircle)
+            ? 10.0
+            : 20.0;
+    item.edgeSigma = jsonDouble(obj, "edgeSigma", 1.5);
+    item.edgeThreshold = jsonDouble(obj, "edgeThreshold", thrDefault);
+    item.samplePitchPx = jsonDouble(obj, "samplePitchPx", 6.0);
+    if (!(item.edgeSigma > 0.1)) {
+        item.edgeSigma = 1.5;
+    }
+    if (!(item.edgeThreshold > 0.0)) {
+        item.edgeThreshold = 20.0;
+    }
+    if (!(item.samplePitchPx >= 2.0)) {
+        item.samplePitchPx = 6.0;
     }
     return item;
 }

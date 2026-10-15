@@ -15,6 +15,7 @@ class CameraHub;
 
 class QAction;
 class QCloseEvent;
+class QEvent;
 class QLabel;
 class QTextEdit;
 class QTableWidget;
@@ -46,6 +47,7 @@ public:
 protected:
     void closeEvent(QCloseEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
     // ---- 工程（菜单「工程」）----
@@ -132,8 +134,12 @@ private:
     void refreshRecipeList();
     void refreshMeasureList();
     void refreshMeasureProperties();
+    /** 拖拽结果表行后，按表内 id 顺序写回配方 */
+    void syncMeasureOrderFromTable();
     void applyAppModeUi();
     void setBusyUi(bool busy);
+    /** 更新主图旁定位得分/角度标签 */
+    void updateAlignmentStatusUi(const Me::CycleResult &result);
 
     // ---- 试跑调度 ----
     bool prepareRun(QString *failReason = nullptr) const;
@@ -211,8 +217,10 @@ private:
     CustomImageView *m_imageView = nullptr;
 
     QLabel *m_okNgLabel = nullptr;
+    QLabel *m_alignStatusLabel = nullptr;
     QTableWidget *m_resultTable = nullptr;
     QTextEdit *m_propertyPanel = nullptr;
+    bool m_reorderingMeasures = false; ///< 拖拽排序写回时抑制列表刷新打断
 
     QSplitter *m_mainSplitter = nullptr;
     bool m_updatingLists = false;   ///< 刷新列表时抑制 selectionChanged 重入

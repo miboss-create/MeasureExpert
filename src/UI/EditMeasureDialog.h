@@ -53,6 +53,9 @@ private:
     QDoubleSpinBox *m_len1 = nullptr;
     QDoubleSpinBox *m_len2 = nullptr;
     QDoubleSpinBox *m_angleExtent = nullptr;
+    QDoubleSpinBox *m_edgeSigma = nullptr;
+    QDoubleSpinBox *m_edgeThreshold = nullptr;
+    QDoubleSpinBox *m_samplePitch = nullptr;
     QComboBox *m_refA = nullptr;
     QComboBox *m_refB = nullptr;
     QDoubleSpinBox *m_nominal = nullptr;

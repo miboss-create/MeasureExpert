@@ -39,6 +39,12 @@ bool needsAngleExtent(MeasureType t)
     return t == MeasureType::FindCircle;
 }
 
+/** 卡尺/找线/找圆：边缘检测高级参数 */
+bool needsEdgeParams(MeasureType t)
+{
+    return needsRoi(t);
+}
+
 double finiteOr(double v, double fallback)
 {
     return qIsFinite(v) ? v : fallback;
@@ -97,6 +103,9 @@ EditMeasureDialog::EditMeasureDialog(const MeasureItem &item,
     m_len2 = makeSpin(0.1, 1e6, item.geometry.length2);
     m_angleExtent = makeSpin(0.01, 12.6,
                              finiteOr(item.geometry.angleExtent, 6.283185307179586), 4);
+    m_edgeSigma = makeSpin(0.4, 8.0, finiteOr(item.edgeSigma, 1.5), 2);
+    m_edgeThreshold = makeSpin(1.0, 255.0, finiteOr(item.edgeThreshold, 20.0), 1);
+    m_samplePitch = makeSpin(2.0, 40.0, finiteOr(item.samplePitchPx, 6.0), 1);
 
     auto fillRefs = [this](QComboBox *box, const QString &selected) {
         const QSignalBlocker blocker(box);
@@ -136,6 +145,9 @@ EditMeasureDialog::EditMeasureDialog(const MeasureItem &item,
     form->addRow(tr("length1 / 半径"), m_len1);
     form->addRow(tr("length2 / 环宽"), m_len2);
     form->addRow(tr("圆弧 angleExtent(rad)"), m_angleExtent);
+    form->addRow(tr("边缘平滑 Sigma"), m_edgeSigma);
+    form->addRow(tr("边缘阈值 Threshold"), m_edgeThreshold);
+    form->addRow(tr("采样步长(px)"), m_samplePitch);
     form->addRow(tr("引用 A"), m_refA);
     form->addRow(tr("引用 B"), m_refB);
     form->addRow(tr("名义值"), m_nominal);
@@ -164,7 +176,8 @@ EditMeasureDialog::EditMeasureDialog(const MeasureItem &item,
 void EditMeasureDialog::onTypeChanged()
 {
     if (!m_type || !m_row || !m_col || !m_phi || !m_len1 || !m_len2
-        || !m_angleExtent || !m_refA || !m_refB) {
+        || !m_angleExtent || !m_edgeSigma || !m_edgeThreshold || !m_samplePitch
+        || !m_refA || !m_refB) {
         return;
     }
 
@@ -172,6 +185,7 @@ void EditMeasureDialog::onTypeChanged()
     const bool roi = needsRoi(t);
     const bool refs = needsRefs(t);
     const bool arc = needsAngleExtent(t);
+    const bool edge = needsEdgeParams(t);
 
     m_row->setEnabled(roi);
     m_col->setEnabled(roi);
@@ -179,6 +193,10 @@ void EditMeasureDialog::onTypeChanged()
     m_len1->setEnabled(roi);
     m_len2->setEnabled(roi);
     m_angleExtent->setEnabled(arc);
+    m_edgeSigma->setEnabled(edge);
+    m_edgeThreshold->setEnabled(edge);
+    // 采样步长仅找线/找圆有意义；卡尺为单剖面
+    m_samplePitch->setEnabled(t == MeasureType::FindLine || t == MeasureType::FindCircle);
     m_refA->setEnabled(refs);
     m_refB->setEnabled(refs);
 
@@ -188,6 +206,17 @@ void EditMeasureDialog::onTypeChanged()
             const QSignalBlocker blocker(m_len2);
             m_len2->setValue(qBound(m_len2->minimum(), r * 0.15, r * 0.9));
         }
+    }
+
+    // 切换类型时，若阈值仍是另一类工具的默认值，则换成当前类默认
+    if (t == MeasureType::FindLine || t == MeasureType::FindCircle) {
+        if (qAbs(m_edgeThreshold->value() - 20.0) < 0.05) {
+            const QSignalBlocker blocker(m_edgeThreshold);
+            m_edgeThreshold->setValue(10.0);
+        }
+    } else if (edge && qAbs(m_edgeThreshold->value() - 10.0) < 0.05) {
+        const QSignalBlocker blocker(m_edgeThreshold);
+        m_edgeThreshold->setValue(20.0);
     }
 }
 
@@ -226,6 +255,9 @@ MeasureItem EditMeasureDialog::buildItem() const
     item.unit = (item.type == MeasureType::Angle) ? QStringLiteral("deg")
                                                   : QStringLiteral("px");
     item.roiDefined = m_roiDefined;
+    item.edgeSigma = m_edgeSigma ? m_edgeSigma->value() : 1.5;
+    item.edgeThreshold = m_edgeThreshold ? m_edgeThreshold->value() : 20.0;
+    item.samplePitchPx = m_samplePitch ? m_samplePitch->value() : 6.0;
     return item;
 }
 

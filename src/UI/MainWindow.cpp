@@ -35,8 +35,8 @@
 #include <QColor>
 #include <QComboBox>
 #include <QCoreApplication>
-#include <cstdio>
 #include <QDialog>
+#include <QEvent>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFileDialog>
@@ -75,21 +75,6 @@ using Me::MeasureType;
 using Me::ProjectService;
 using Me::RunEngine;
 using Me::TrainAlignmentDialog;
-
-namespace {
-
-void exitTrace(const char *step)
-{
-    FILE *f = nullptr;
-    if (fopen_s(&f, "D:\\learning\\MeasureExpert_runtime\\log\\exit_trace.txt", "a") != 0 || !f) {
-        return;
-    }
-    fprintf(f, "%s\n", step);
-    fflush(f);
-    fclose(f);
-}
-
-} // namespace
 
 // ---- 构造与生命周期 ----
 
@@ -152,9 +137,7 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
-    exitTrace("dtor:begin");
     teardownOnExit();
-    exitTrace("dtor:afterTeardown");
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -382,7 +365,6 @@ void MainWindow::teardownOnExit()
         return;
     }
     m_exitTornDown = true;
-    exitTrace("teardown:begin");
 
     m_stopRequested = true;
     m_continuous = false;
@@ -390,12 +372,10 @@ void MainWindow::teardownOnExit()
 
     if (m_logWidget) {
         m_logWidget->detachFromLogSink();
-        exitTrace("teardown:logDetached");
     }
     if (m_cameraHub) {
         disconnect(m_cameraHub, nullptr, this, nullptr);
         m_cameraHub->shutdown();
-        exitTrace("teardown:cameraDown");
     }
     if (m_projectService) {
         disconnect(m_projectService, nullptr, this, nullptr);
@@ -405,9 +385,7 @@ void MainWindow::teardownOnExit()
     if (m_logWidget) {
         QCoreApplication::removePostedEvents(m_logWidget);
     }
-    exitTrace("teardown:beforeRunEngine");
     shutdownRunEngine();
-    exitTrace("teardown:done");
 }
 
 void MainWindow::shutdownRunEngine()
@@ -432,28 +410,22 @@ void MainWindow::shutdownRunEngine()
 
     // 不挂父对象：在工作线程事件循环里同步 delete this，再 quit/wait
     if (engine && thread->isRunning()) {
-        exitTrace("runEngine:invokeShutdown");
-        const bool ok = QMetaObject::invokeMethod(engine, &RunEngine::shutdown,
-                                                  Qt::BlockingQueuedConnection);
-        exitTrace(ok ? "runEngine:shutdownOk" : "runEngine:shutdownFail");
+        QMetaObject::invokeMethod(engine, &RunEngine::shutdown,
+                                  Qt::BlockingQueuedConnection);
         engine = nullptr; // 已在工作线程 delete this
     } else if (engine) {
         delete engine;
         engine = nullptr;
-        exitTrace("runEngine:deletedOnMain");
     }
 
     if (thread->isRunning()) {
-        exitTrace("runEngine:quit");
         thread->quit();
         if (!thread->wait(5000)) {
-            exitTrace("runEngine:terminate");
             thread->terminate();
             thread->wait(2000);
         }
     }
     delete thread;
-    exitTrace("runEngine:threadDeleted");
 }
 
 void MainWindow::setupRunEngine()
@@ -506,7 +478,10 @@ bool MainWindow::initWidget()
     auto *imageBarLayout = new QHBoxLayout(imageBar);
     imageBarLayout->setContentsMargins(6, 2, 6, 2);
     imageBarLayout->setSpacing(8);
+    m_alignStatusLabel = new QLabel(tr("定位: -"), this);
+    m_alignStatusLabel->setStyleSheet(QStringLiteral("color: #9aa0a6;"));
     imageBarLayout->addWidget(m_activeRecipeLabel, 1);
+    imageBarLayout->addWidget(m_alignStatusLabel);
     imageBarLayout->addWidget(m_okNgLabel);
 
     auto *imageColumn = new QWidget(this);
@@ -551,6 +526,13 @@ bool MainWindow::initWidget()
     m_resultTable->setShowGrid(false);
     m_resultTable->verticalHeader()->setVisible(false);
     m_resultTable->verticalHeader()->setDefaultSectionSize(26);
+    // 编辑模式下可拖拽行调整测量顺序（派生项请保持在引用项之后）
+    m_resultTable->setDragEnabled(true);
+    m_resultTable->setAcceptDrops(true);
+    m_resultTable->setDropIndicatorShown(true);
+    m_resultTable->setDragDropMode(QAbstractItemView::InternalMove);
+    m_resultTable->setDefaultDropAction(Qt::MoveAction);
+    m_resultTable->viewport()->installEventFilter(this);
     auto *header = m_resultTable->horizontalHeader();
     header->setSectionResizeMode(0, QHeaderView::Stretch);
     header->setSectionResizeMode(1, QHeaderView::ResizeToContents);
@@ -558,6 +540,9 @@ bool MainWindow::initWidget()
     header->setSectionResizeMode(3, QHeaderView::Fixed);
     m_resultTable->setColumnWidth(3, 48);
     measureLayout->addWidget(m_resultTable, 1);
+    auto *orderHint = new QLabel(tr("提示：拖拽行可调整测量顺序"), measurePanel);
+    orderHint->setStyleSheet(QStringLiteral("color: #888; font-size: 11px;"));
+    measureLayout->addWidget(orderHint);
 
     m_propertyToggle = new QToolButton(measurePanel);
     m_propertyToggle->setText(tr("属性"));
@@ -772,7 +757,59 @@ void MainWindow::applyAppModeUi()
         m_modeToggleAction->setEnabled(!m_busy && !m_continuous);
         m_modeToggleAction->setText(edit ? tr("切换到运行模式") : tr("切换到编辑模式"));
     }
+    if (m_resultTable) {
+        const auto mode = canEdit ? QAbstractItemView::InternalMove
+                                  : QAbstractItemView::NoDragDrop;
+        m_resultTable->setDragDropMode(mode);
+        m_resultTable->setDragEnabled(canEdit);
+        m_resultTable->setAcceptDrops(canEdit);
+    }
     updateCameraActionsUi();
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if (m_resultTable && watched == m_resultTable->viewport()
+        && event && event->type() == QEvent::Drop
+        && m_appMode == AppMode::Edit && !m_busy && !m_continuous) {
+        // 先让表格完成 InternalMove，再按行 id 写回工程
+        QTimer::singleShot(0, this, &MainWindow::syncMeasureOrderFromTable);
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
+void MainWindow::syncMeasureOrderFromTable()
+{
+    if (!m_resultTable || !m_projectService || m_reorderingMeasures) {
+        return;
+    }
+    if (m_appMode != AppMode::Edit || m_busy || m_continuous) {
+        return;
+    }
+    const QString recipeId = selectedRecipeId();
+    if (recipeId.isEmpty()) {
+        return;
+    }
+    QStringList ids;
+    ids.reserve(m_resultTable->rowCount());
+    for (int r = 0; r < m_resultTable->rowCount(); ++r) {
+        const auto *item = m_resultTable->item(r, 0);
+        if (!item) {
+            refreshMeasureList();
+            return;
+        }
+        ids.push_back(item->data(Qt::UserRole).toString());
+    }
+    // structureChanged 为 QueuedConnection：保持标志直到下一轮事件，避免拖拽后整表重建
+    m_reorderingMeasures = true;
+    const bool ok = m_projectService->reorderMeasures(recipeId, ids);
+    if (!ok) {
+        m_reorderingMeasures = false;
+        refreshMeasureList();
+        return;
+    }
+    qInfo().noquote() << tr("已调整测量项顺序");
+    QTimer::singleShot(0, this, [this]() { m_reorderingMeasures = false; });
 }
 
 // ---- 列表刷新与属性面板 ----
@@ -792,6 +829,9 @@ void MainWindow::refreshRecipeList()
 
 void MainWindow::refreshMeasureList()
 {
+    if (m_reorderingMeasures) {
+        return;
+    }
     m_updatingLists = true;
     QString keepMeasureId = selectedMeasureId();
     if (!m_pendingSelectMeasureId.isEmpty()) {
@@ -877,6 +917,10 @@ void MainWindow::refreshMeasureProperties()
     text += tr("下公差: %1\n").arg(m.lower, 0, 'f', dec);
     text += tr("小数位: %1\n").arg(dec);
     text += tr("ROI: %1\n").arg(m.roiDefined ? tr("已确认") : tr("未画"));
+    text += tr("边缘: Sigma=%1  Threshold=%2  采样步长=%3 px\n")
+                .arg(m.edgeSigma, 0, 'f', 2)
+                .arg(m.edgeThreshold, 0, 'f', 1)
+                .arg(m.samplePitchPx, 0, 'f', 1);
     text += tr("几何(相对模板):\n");
     text += QStringLiteral("  row=%1  col=%2  phi=%3\n")
                 .arg(m.geometry.row, 0, 'f', 3)
@@ -917,6 +961,45 @@ void MainWindow::setTotalVerdict(int state)
     }
 }
 
+void MainWindow::updateAlignmentStatusUi(const Me::CycleResult &result)
+{
+    if (!m_alignStatusLabel) {
+        return;
+    }
+    const auto *recipe = m_projectService ? m_projectService->activeRecipe() : nullptr;
+    const bool hasModel = recipe && !recipe->alignment.modelFile.isEmpty();
+    if (!hasModel) {
+        m_alignStatusLabel->setText(tr("定位: 未启用"));
+        m_alignStatusLabel->setStyleSheet(QStringLiteral("color: #9aa0a6;"));
+        m_alignStatusLabel->setToolTip(
+            tr("当前配方未创建定位模板。ROI 按图像坐标保存，工件旋转后不会跟随。"));
+        return;
+    }
+    if (result.alignment.ok) {
+        const double deg = result.alignment.angleRad * 180.0 / M_PI;
+        m_alignStatusLabel->setText(
+            tr("定位 OK  score=%1  φ=%2°")
+                .arg(result.alignment.score, 0, 'f', 3)
+                .arg(deg, 0, 'f', 1));
+        m_alignStatusLabel->setStyleSheet(QStringLiteral("color: #50dc78;"));
+        m_alignStatusLabel->setToolTip(
+            tr("得分 %1（最低要求 %2）\n中心 row=%3 col=%4")
+                .arg(result.alignment.score, 0, 'f', 4)
+                .arg(recipe->alignment.minScore, 0, 'f', 2)
+                .arg(result.alignment.row, 0, 'f', 2)
+                .arg(result.alignment.column, 0, 'f', 2));
+    } else {
+        const QString msg = result.alignment.message.isEmpty()
+            ? tr("未匹配到模板")
+            : result.alignment.message;
+        m_alignStatusLabel->setText(tr("定位失败: %1").arg(msg));
+        m_alignStatusLabel->setStyleSheet(QStringLiteral("color: #ff6e6e;"));
+        m_alignStatusLabel->setToolTip(
+            tr("定位失败：跟随类测量将无法变换 ROI。\n可降低 minScore、重训模板，或检查光照。\n%1")
+                .arg(msg));
+    }
+}
+
 void MainWindow::applyCycleResult(const Me::CycleResult &result)
 {
     if (result.alignmentOk || !m_currentImage.isNull()) {
@@ -924,6 +1007,7 @@ void MainWindow::applyCycleResult(const Me::CycleResult &result)
     }
 
     setTotalVerdict(result.totalOk ? 1 : 0);
+    updateAlignmentStatusUi(result);
 
     for (int row = 0; row < m_resultTable->rowCount(); ++row) {
         auto *nameItem = m_resultTable->item(row, 0);
@@ -968,17 +1052,47 @@ void MainWindow::applyCycleResult(const Me::CycleResult &result)
         }
     }
 
+    const auto *recipe = m_projectService->activeRecipe();
+    QString alignBrief;
+    if (recipe && !recipe->alignment.modelFile.isEmpty()) {
+        if (result.alignment.ok) {
+            alignBrief = tr("定位 score=%1 φ=%2°")
+                             .arg(result.alignment.score, 0, 'f', 3)
+                             .arg(result.alignment.angleRad * 180.0 / M_PI, 0, 'f', 1);
+        } else {
+            alignBrief = tr("定位失败");
+        }
+    } else {
+        alignBrief = tr("无定位");
+    }
+
     statusBar()->showMessage(
-        tr("试跑完成: %1 | 耗时 %2 ms | %3")
-            .arg(result.totalOk ? QStringLiteral("OK") : QStringLiteral("NG"))
+        tr("试跑完成: %1 | %2 | 耗时 %3 ms | %4")
+            .arg(result.totalOk ? QStringLiteral("OK") : QStringLiteral("NG"),
+                 alignBrief)
             .arg(result.elapsedMs)
             .arg(result.reason),
         8000);
 
-    qInfo().noquote() << tr("试跑完成 [%1] %2 (%3 ms)")
+    qInfo().noquote() << tr("试跑完成 [%1] %2 | %3 (%4 ms)")
                              .arg(result.totalOk ? QStringLiteral("OK") : QStringLiteral("NG"),
+                                  alignBrief,
                                   result.reason)
                              .arg(result.elapsedMs);
+
+    // 定位失败时给出明确提示（连续运行只打日志，避免弹窗打断）
+    if (recipe && !recipe->alignment.modelFile.isEmpty() && !result.alignment.ok
+        && !m_continuous) {
+        const QString detail = result.alignment.message.isEmpty()
+            ? tr("未匹配到形状模型。")
+            : result.alignment.message;
+        QMessageBox::warning(
+            this,
+            tr("定位失败"),
+            tr("当前图定位失败，跟随类测量可能全部 NG。\n\n%1\n\n"
+               "建议：降低 minScore、扩大角度范围、重训模板 ROI，或检查图像是否与模板同类。")
+                .arg(detail));
+    }
 }
 
 // ---- 工程文件操作 ----
@@ -1477,6 +1591,20 @@ void MainWindow::onDrawMeasureRoi()
     // 第一次点击：进入编辑，按 followPose 投影已有几何为种子 ROI
     // 第二次点击：确认写入几何（有定位则相对模板，否则图像坐标）
     if (m_roiEditMode != RoiEditMode::MeasureCaliper) {
+        if (!followPose) {
+            const auto ret = QMessageBox::question(
+                this,
+                tr("未创建定位模板"),
+                tr("当前配方还没有定位模板。\n\n"
+                   "继续画 ROI 将按「图像坐标」保存，工件平移/旋转后不会自动跟随。\n"
+                   "若需要跟随，请先「运行 → 创建定位模板」。\n\n"
+                   "是否仍按图像坐标继续画 ROI？"),
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::Yes);
+            if (ret != QMessageBox::Yes) {
+                return;
+            }
+        }
         Me::AlignmentResult align;
         if (followPose) {
             // followPose：用当前图定位位姿，把相对模板几何反投影到图像
@@ -1831,6 +1959,11 @@ bool MainWindow::prepareRun(QString *failReason) const
         }
         return false;
     }
+    if (recipe->alignment.modelFile.isEmpty()) {
+        qInfo().noquote() << tr(
+            "提示：当前配方未创建定位模板，测量 ROI 按图像坐标使用，工件平移/旋转后需重画 ROI。"
+            "量产场景建议先「创建定位模板」。");
+    }
     return true;
 }
 
@@ -2066,10 +2199,19 @@ void MainWindow::onRemoveMeasure()
 
 void MainWindow::onProjectStructureChanged()
 {
+    if (m_reorderingMeasures) {
+        updateWindowTitle();
+        return;
+    }
     refreshRecipeList();
     refreshMeasureList();
     updateWindowTitle();
     updateCalibrationStatus();
+    // 无试跑结果时，按配方是否有模板刷新定位标签
+    if (m_alignStatusLabel) {
+        Me::CycleResult empty;
+        updateAlignmentStatusUi(empty);
+    }
 }
 
 void MainWindow::onDirtyChanged(bool dirty)

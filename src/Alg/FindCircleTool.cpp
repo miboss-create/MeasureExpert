@@ -26,7 +26,9 @@ namespace {
  * @param phiStart      起始角（弧度，HALCON 约定：0 指向列正方向）
  * @param angleExtent   展角（弧度，正为逆时针）
  * @param radialHalf    径向半搜索长度（≈环宽 length2）
+ * @param sigma         MeasurePos 平滑
  * @param threshold     MeasurePos 边缘幅度阈值
+ * @param samplePitchPx 沿弧长的采样步长（像素）
  */
 QVector<Point2D> sampleRadialEdges(const HImage &gray,
                                    Hlong width,
@@ -37,16 +39,21 @@ QVector<Point2D> sampleRadialEdges(const HImage &gray,
                                    double phiStart,
                                    double angleExtent,
                                    double radialHalf,
-                                   double threshold)
+                                   double sigma,
+                                   double threshold,
+                                   double samplePitchPx)
 {
     QVector<Point2D> pts;
     if (radius < 2.0 || radialHalf < 1.0 || angleExtent < 0.2) {
         return pts;
     }
 
-    // 弧长越长采样越密；上限 72 平衡速度与拟合稳定性
+    const double pitch = qBound(2.0, samplePitchPx, 40.0);
+    const double sig = qBound(0.4, sigma, 8.0);
+    const double thr = qBound(1.0, threshold, 255.0);
+    // 弧长越长采样越密；上限 96 平衡速度与拟合稳定性
     const double arcLen = qMax(1.0, radius * angleExtent);
-    const int samples = qBound(12, static_cast<int>(arcLen / 8.0), 72);
+    const int samples = qBound(12, static_cast<int>(arcLen / pitch), 96);
     const double step = angleExtent / static_cast<double>(samples);
     // 切向半宽：略小于角步长对应的弧长，避免相邻卡尺严重重叠
     const double tangentialHalf = qBound(1.0, radius * step * 0.35, 8.0);
@@ -57,13 +64,18 @@ QVector<Point2D> sampleRadialEdges(const HImage &gray,
         // HALCON 极坐标：row = r0 + R*sin(a), col = c0 + R*cos(a)
         const double row = rowC + radius * qSin(ang);
         const double col = colC + radius * qCos(ang);
+        if (row < -radialHalf || col < -radialHalf
+            || row > static_cast<double>(height) + radialHalf
+            || col > static_cast<double>(width) + radialHalf) {
+            continue;
+        }
         HTuple handle;
         try {
             // length1=径向搜索，length2=切向半宽；phi=ang 使搜索沿半径方向
             GenMeasureRectangle2(row, col, ang, radialHalf, tangentialHalf,
                                  width, height, "bilinear", &handle);
             HTuple rowEdge, colEdge, amplitude, distance;
-            MeasurePos(gray, handle, 1.0, threshold, "all", "all",
+            MeasurePos(gray, handle, sig, thr, "all", "all",
                        &rowEdge, &colEdge, &amplitude, &distance);
             CloseMeasure(handle);
             handle = HTuple();
@@ -147,12 +159,15 @@ MeasureResult FindCircleTool::run(const MeasureItem &item, const ToolContext &ct
 
         // 第一次：在用户设定的环宽内找边
         QVector<Point2D> edges = sampleRadialEdges(
-            gray, width, height, rowImg, colImg, radius, phiImg, angleExtent, annulus, 10.0);
-        // 第二次兜底：环宽偏小或 ROI 略偏时，放宽径向搜索到约 0.85R
+            gray, width, height, rowImg, colImg, radius, phiImg, angleExtent, annulus,
+            item.edgeSigma, item.edgeThreshold, item.samplePitchPx);
+        // 第二次兜底：环宽偏小或 ROI 略偏时，放宽径向搜索到约 0.85R，阈值略降
         if (edges.size() < 3) {
             const double wide = qMax(annulus, radius * 0.85);
+            const double thrLoose = qMax(1.0, item.edgeThreshold * 0.8);
             const QVector<Point2D> wideEdges = sampleRadialEdges(
-                gray, width, height, rowImg, colImg, radius, phiImg, angleExtent, wide, 8.0);
+                gray, width, height, rowImg, colImg, radius, phiImg, angleExtent, wide,
+                item.edgeSigma, thrLoose, item.samplePitchPx);
             if (wideEdges.size() > edges.size()) {
                 edges = wideEdges;
             }

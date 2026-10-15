@@ -6,9 +6,11 @@
 #include "Core/ProjectService.h"
 
 #include <QFile>
+#include <QHash>
 #include <QIODevice>
 #include <QJsonDocument>
 #include <QSaveFile>
+#include <QStringList>
 
 #include <utility>
 
@@ -239,6 +241,10 @@ QString ProjectService::addMeasure(const QString &recipeId, const QString &name,
     }
     MeasureItem item = MeasureItem::createDefault(name);
     item.type = type;
+    // 找线/找圆原先硬编码阈值为 10，默认比卡尺更灵敏
+    if (type == MeasureType::FindLine || type == MeasureType::FindCircle) {
+        item.edgeThreshold = 10.0;
+    }
     recipe->measures.push_back(item);
     markDirty();
     emit structureChanged();
@@ -291,6 +297,64 @@ bool ProjectService::updateMeasure(const QString &recipeId, const MeasureItem &i
         return false;
     }
     recipe->measures[idx] = item;
+    markDirty();
+    emit structureChanged();
+    return true;
+}
+
+bool ProjectService::moveMeasure(const QString &recipeId, int fromIndex, int toIndex)
+{
+    Recipe *recipe = m_project.findRecipe(recipeId);
+    if (!recipe) {
+        return false;
+    }
+    const int n = recipe->measures.size();
+    if (fromIndex < 0 || fromIndex >= n || toIndex < 0 || toIndex >= n || fromIndex == toIndex) {
+        return false;
+    }
+    recipe->measures.move(fromIndex, toIndex);
+    markDirty();
+    emit structureChanged();
+    return true;
+}
+
+bool ProjectService::reorderMeasures(const QString &recipeId, const QStringList &orderedIds)
+{
+    Recipe *recipe = m_project.findRecipe(recipeId);
+    if (!recipe) {
+        return false;
+    }
+    if (orderedIds.size() != recipe->measures.size()) {
+        return false;
+    }
+    QHash<QString, MeasureItem> byId;
+    byId.reserve(recipe->measures.size());
+    for (const MeasureItem &m : recipe->measures) {
+        byId.insert(m.id, m);
+    }
+    if (byId.size() != orderedIds.size()) {
+        return false;
+    }
+    QVector<MeasureItem> next;
+    next.reserve(orderedIds.size());
+    for (const QString &id : orderedIds) {
+        const auto it = byId.constFind(id);
+        if (it == byId.cend()) {
+            return false;
+        }
+        next.push_back(it.value());
+    }
+    bool same = true;
+    for (int i = 0; i < next.size(); ++i) {
+        if (next[i].id != recipe->measures[i].id) {
+            same = false;
+            break;
+        }
+    }
+    if (same) {
+        return true;
+    }
+    recipe->measures = next;
     markDirty();
     emit structureChanged();
     return true;

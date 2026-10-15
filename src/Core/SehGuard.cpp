@@ -20,11 +20,38 @@ void writeText(HANDLE file, const char *text)
     WriteFile(file, text, static_cast<DWORD>(lstrlenA(text)), &n, nullptr);
 }
 
+/** 崩溃日志写到 exe 同级 log/crash.txt（与 LogSink 根目录一致） */
+bool crashLogPath(wchar_t *out, size_t outChars)
+{
+    if (!out || outChars < 32) {
+        return false;
+    }
+    wchar_t modPath[MAX_PATH];
+    const DWORD n = GetModuleFileNameW(nullptr, modPath, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) {
+        return false;
+    }
+    wchar_t *slash = wcsrchr(modPath, L'\\');
+    if (!slash) {
+        return false;
+    }
+    *slash = L'\0';
+    wchar_t logDir[MAX_PATH];
+    if (swprintf_s(logDir, L"%s\\log", modPath) <= 0) {
+        return false;
+    }
+    CreateDirectoryW(logDir, nullptr);
+    return swprintf_s(out, outChars, L"%s\\crash.txt", logDir) > 0;
+}
+
 LONG WINAPI crashFilter(EXCEPTION_POINTERS *info)
 {
-    const wchar_t *path = L"D:\\learning\\MeasureExpert_runtime\\log\\crash.txt";
-    HANDLE file = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
-                              CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    wchar_t path[MAX_PATH];
+    HANDLE file = INVALID_HANDLE_VALUE;
+    if (crashLogPath(path, MAX_PATH)) {
+        file = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    }
     if (!info || !info->ExceptionRecord) {
         writeText(file, "no exception info\r\n");
         if (file != INVALID_HANDLE_VALUE) {

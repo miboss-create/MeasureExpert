@@ -58,11 +58,14 @@ MeasureResult runCaliperPairs(const MeasureItem &item, const ToolContext &ctx, b
         HTuple rowEdgeSecond, colEdgeSecond, ampSecond;
         HTuple intraDistance, interDistance;
 
+        const double sigma = qBound(0.4, item.edgeSigma, 8.0);
+        const double threshold = qBound(1.0, item.edgeThreshold, 255.0);
+
         // MeasurePairs：在同一剖面上找成对边缘；intraDistance[i] = 第 i 对的间距（像素）
         MeasurePairs(gray,
                      measureHandle,
-                     1.5,   // Sigma
-                     20,    // Threshold
+                     sigma,
+                     threshold,
                      "all",
                      "all",
                      &rowEdgeFirst,
